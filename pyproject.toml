@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "agent-interface-protocol"
 version = "0.1.0"
@@ -6,6 +10,9 @@ requires-python = ">=3.11"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Agent Interface Protocol maintainers" }]
+
+[tool.setuptools.packages.find]
+include = ["agent_interface_protocol*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,6 +1,6 @@
 # Agent Interface Protocol
 
-The agent interface is the stable contract for host-to-agent handoff, agent-to-agent handoff, and agent step results. The protocol DTOs live in `contracts/agent_interface.py` so new work can depend on one immutable library surface instead of copying local dictionaries across agent boundaries.
+The agent interface is the stable contract for host-to-agent handoff, agent-to-agent handoff, and agent step results. The protocol DTOs live in `agent_interface_protocol/agent_interface.py` so new work can depend on one immutable library surface instead of copying local dictionaries across agent boundaries.
 
 Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
 

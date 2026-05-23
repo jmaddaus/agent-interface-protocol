@@ -52,7 +52,7 @@ python -m pip install "agent-interface-protocol==0.1.*"
 ## Quick Example
 
 ```python
-from contracts.agent_interface import (
+from agent_interface_protocol.agent_interface import (
     AgentHandoff,
     AgentStepResult,
     ExecutionPolicy,

@@ -1,4 +1,4 @@
-from contracts.agent_interface import (
+from agent_interface_protocol.agent_interface import (
     AGENT_STEP_STATUSES,
     PROTOCOL_VERSION,
     AgentExecutor,

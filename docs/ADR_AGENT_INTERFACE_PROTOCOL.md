@@ -12,7 +12,7 @@ The long-term goal is a small independent protocol package that consuming applic
 
 ## Decision
 
-Introduce an immutable Agent Interface Protocol library. Protocol DTOs live in `contracts/agent_interface.py`.
+Introduce an immutable Agent Interface Protocol library. Protocol DTOs live in `agent_interface_protocol/agent_interface.py`.
 
 The protocol has three first-class surfaces:
 

@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from contracts.agent_interface import (
+from agent_interface_protocol.agent_interface import (
     AgentHandoff,
     AgentStepResult,
     ExecutionPolicy,
