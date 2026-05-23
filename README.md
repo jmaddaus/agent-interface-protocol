@@ -1,16 +1,16 @@
 # Agent Interface Protocol
 
-Standalone copy of the Agent Interface Protocol contracts currently used by KKF Lite.
+Agent Interface Protocol provides immutable Python DTOs for host-to-agent handoff, agent-to-agent handoff, and agent step results.
 
-This repo intentionally contains only protocol-owned DTOs and documentation. KKF-specific scheduler adapters, dispatcher registries, WorkItem shapes, lane orchestrators, and UI bridges stay in KKF.
+The package intentionally contains only protocol-owned contracts and documentation. Product-specific schedulers, dispatcher registries, lane orchestrators, UI bridges, and runtime adapters belong in consuming applications.
 
 ## Contents
 
-- contracts.agent_interface: immutable AIP DTOs and serialization helpers.
-- docs/AGENT_INTERFACE_PROTOCOL.md: protocol invariants.
-- docs/ADR_AGENT_INTERFACE_PROTOCOL.md: extraction decision record.
-- tests/test_agent_interface_protocol.py: protocol conformance tests.
+- `contracts.agent_interface`: immutable AIP DTOs and serialization helpers.
+- `docs/AGENT_INTERFACE_PROTOCOL.md`: protocol invariants.
+- `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`: protocol decision record.
+- `tests/test_agent_interface_protocol.py`: protocol conformance tests.
 
 ## Verify
 
-Run python -m pytest from the repo root.
+Run `python -m pytest` from the repository root.
