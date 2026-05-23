@@ -1,0 +1,12 @@
+[project]
+name = "agent-interface-protocol"
+version = "0.1.0"
+description = "Immutable Agent Interface Protocol DTOs for host and agent handoff."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "KKF" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
