@@ -48,3 +48,6 @@ For standalone use:
 - Add conformance tests for third-party agent executors before external publication.
 - Keep dispatcher registries outside AIP unless multiple independent implementations require a shared registry contract.
 - Prefer rendering directly from `AgentStepResult.tool_events` for audit/debug surfaces.
+- Maintain `SUPPORTED_PROTOCOL_VERSIONS` as an inclusive range, widening it
+  before emitting a new version and narrowing it only after no producer can
+  emit the old one, so rolling deploys never reject in-flight payloads.
