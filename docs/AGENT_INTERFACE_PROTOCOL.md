@@ -29,6 +29,14 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
 
    Product-specific dispatcher tools and routing schemas belong to consuming applications. AIP owns the generic handoff/result envelope and does not prescribe scheduler, queue, dispatcher, or lane registry implementation details.
 
+6. Parsing is strict at trust boundaries.
+
+   `from_payload` rejects unknown top-level fields and wrong-typed values
+   rather than coercing or dropping them. In-process construction stays
+   lenient. Carry product-specific data in an `extra` field. The library
+   emits `PROTOCOL_VERSION` and accepts any version in
+   `SUPPORTED_PROTOCOL_VERSIONS`, preserving the incoming version on parse.
+   
 ## Extension Points
 
 - Add new semantic fields through `SemanticContext.extra`, `SemanticResult.extra`, or `ExecutionPolicy.extra` first. Promote them to first-class fields only when more than one consumer needs a stable named field.
