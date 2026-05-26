@@ -46,7 +46,7 @@ python -m pip install -e .
 When published as a package, pin it like any other protocol dependency:
 
 ```bash
-python -m pip install "agent-interface-protocol==0.1.*"
+python -m pip install "agent-interface-protocol==0.2.*"
 ```
 
 ## Quick Example
@@ -109,6 +109,15 @@ round_tripped = AgentStepResult.from_payload(payload)
 assert round_tripped == result
 ```
 
+## Parsing at Trust Boundaries
+
+Constructing a DTO in Python is lenient: values are normalized to the declared types for ergonomics. Parsing an external payload with `from_payload` is strict, because that is the trust boundary:
+
+- unknown top-level fields raise `ValueError` (this catches typos such as `dispatch_args` instead of `args`, and forward-compatible fields emitted by a newer producer);
+- wrong-typed fields raise `ValueError` instead of being silently coerced or dropped.
+
+Put arbitrary or product-specific data inside an `extra` field rather than as new top-level keys, so it survives parsing instead of being rejected.
+
 ## Status Values
 
 `AgentStepResult.status` must be one of:
@@ -153,8 +162,16 @@ Run tests from the repository root:
 python -m pytest
 ```
 
-The conformance tests cover immutability, serialization, protocol-version rejection, status validation, semantic/tool separation, and non-mapping result behavior.
+The conformance tests cover immutability, serialization, protocol-version rejection and preservation, status validation, semantic/tool separation, non-mapping result behavior, and unknown-field and wrong-type rejection at parse boundaries.
 
 ## Versioning
 
-Protocol payloads include `agent_interface_version`. Consumers should pin the package version and reject unsupported protocol versions at process boundaries, queue rehydration boundaries, and network boundaries.
+Protocol payloads include `agent_interface_version`. This package emits `PROTOCOL_VERSION` and accepts any version in `SUPPORTED_PROTOCOL_VERSIONS` (an inclusive range from `MIN_SUPPORTED_PROTOCOL_VERSION` to `MAX_SUPPORTED_PROTOCOL_VERSION`). `from_payload` preserves the incoming version rather than rewriting it, so a process that supports more than one version can accept old and new payloads side by side.
+
+When introducing a new protocol version, widen the supported range *before* any producer starts emitting it. Keeping the previous version in the supported set during a rolling deploy avoids rejecting in-flight payloads while old and new processes run concurrently. Drop a version from the range only once no producer can still emit it.
+
+Payloads outside the supported range raise `ValueError`. Enforce this at process boundaries, queue rehydration boundaries, and network boundaries.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
