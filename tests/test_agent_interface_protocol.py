@@ -9,6 +9,7 @@ from agent_interface_protocol.agent_interface import (
     AgentStepResult,
     ExecutionPolicy,
     PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
     SemanticContext,
     SemanticResult,
     ToolEvent,
@@ -61,22 +62,46 @@ def test_handoff_keeps_semantics_separate_from_tool_args():
     assert AgentHandoff.from_payload(payload) == handoff
 
 
-def test_handoff_payload_accepts_only_protocol_args_key():
-    handoff = AgentHandoff.from_payload({
-        "lane": "admin",
-        "action": "bulk_add_users",
-        "dispatch_args": {"user_refs": [{"display_name": "Kim"}]},
-    })
+def test_handoff_rejects_unknown_payload_fields():
+    with pytest.raises(ValueError, match="unknown AgentHandoff field"):
+        AgentHandoff.from_payload({
+            "lane": "admin",
+            "action": "bulk_add_users",
+            "dispatch_args": {"user_refs": [{"display_name": "Kim"}]},
+        })
 
-    assert handoff.args == {}
+
+def test_from_payload_rejects_wrong_typed_fields():
+    with pytest.raises(ValueError, match="must be a string"):
+        SemanticContext.from_payload({"user_goal": 123})
+    with pytest.raises(ValueError, match="must be a mapping"):
+        AgentHandoff.from_payload({"lane": "admin", "args": "not-a-mapping"})
+    with pytest.raises(ValueError, match="must be a list of strings"):
+        SemanticContext.from_payload({"assumptions": "not-a-list"})
+    with pytest.raises(ValueError, match="must be a string"):
+        ExecutionPolicy.from_payload({"write_scope": [1, 2]})
+    with pytest.raises(ValueError, match="must be an integer"):
+        ExecutionPolicy.from_payload({"priority": "high"})
+    with pytest.raises(ValueError, match="must be a boolean"):
+        ExecutionPolicy.from_payload({"requires_confirmation": "yes"})
 
 
 def test_handoff_rejects_unsupported_protocol_version():
     with pytest.raises(ValueError, match="unsupported agent_interface_version"):
         AgentHandoff.from_payload({
-            "agent_interface_version": PROTOCOL_VERSION + 1,
+            "agent_interface_version": max(SUPPORTED_PROTOCOL_VERSIONS) + 1,
             "lane": "admin",
         })
+
+
+def test_supported_protocol_versions_are_preserved_on_round_trip():
+    for version in SUPPORTED_PROTOCOL_VERSIONS:
+        handoff = AgentHandoff.from_payload({
+            "agent_interface_version": version,
+            "lane": "admin",
+        })
+        assert handoff.protocol_version == version
+        assert handoff.to_payload()["agent_interface_version"] == version
 
 
 def test_step_result_does_not_require_parsing_tool_events_for_meaning():
@@ -116,7 +141,7 @@ def test_step_result_rejects_unknown_status():
 def test_step_result_rejects_unsupported_protocol_version():
     with pytest.raises(ValueError, match="unsupported agent_interface_version"):
         AgentStepResult.from_payload({
-            "agent_interface_version": PROTOCOL_VERSION + 1,
+            "agent_interface_version": max(SUPPORTED_PROTOCOL_VERSIONS) + 1,
             "status": "completed",
         })
 
