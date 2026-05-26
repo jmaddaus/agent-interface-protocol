@@ -4,12 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-interface-protocol"
-version = "0.1.0"
+version = "0.2.0"
 description = "Immutable Agent Interface Protocol DTOs for host and agent handoff."
 requires-python = ">=3.11"
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "Agent Interface Protocol maintainers" }]
+authors = [{ name = "Agent Interface Protocol contributors" }]
+keywords = ["agents", "protocol", "handoff", "interoperability", "dto"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/jmaddaus/agent-interface-protocol"
+Source = "https://github.com/jmaddaus/agent-interface-protocol"
+Issues = "https://github.com/jmaddaus/agent-interface-protocol/issues"
 
 [tool.setuptools.packages.find]
 include = ["agent_interface_protocol*"]
