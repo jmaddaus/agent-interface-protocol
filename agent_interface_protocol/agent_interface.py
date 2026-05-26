@@ -7,6 +7,14 @@ The protocol separates semantic state from execution state:
 * tool events describe what was invoked and what came back.
 
 Tool calls are an execution trace, not the source of semantic meaning.
+
+Construction vs. parsing
+------------------------
+Constructing a DTO directly in Python is treated as trusted: inputs are
+normalized (coerced to the declared types) for ergonomics. Parsing an
+external payload with ``from_payload`` is treated as a trust boundary: it
+rejects unknown fields and wrong-typed values instead of silently
+coercing or dropping them.
 """
 from __future__ import annotations
 
@@ -15,7 +23,18 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
 
+# Version this build emits when serializing freshly-constructed objects.
 PROTOCOL_VERSION = 1
+
+# Inclusive range of protocol versions this build can parse. Widen this
+# (not just PROTOCOL_VERSION) when adding a new version so that services
+# deploying on a rolling basis can accept both the old and the new payload
+# during the rollout window.
+MIN_SUPPORTED_PROTOCOL_VERSION = 1
+MAX_SUPPORTED_PROTOCOL_VERSION = 1
+SUPPORTED_PROTOCOL_VERSIONS: frozenset[int] = frozenset(
+    range(MIN_SUPPORTED_PROTOCOL_VERSION, MAX_SUPPORTED_PROTOCOL_VERSION + 1)
+)
 
 AgentStepStatus = Literal[
     "completed",
@@ -33,6 +52,10 @@ AGENT_STEP_STATUSES: frozenset[str] = frozenset({
     "noop",
 })
 
+
+# ---------------------------------------------------------------------------
+# Normalization helpers (trusted, in-process construction path)
+# ---------------------------------------------------------------------------
 
 def _freeze_value(value: Any) -> Any:
     if isinstance(value, MappingProxyType):
@@ -72,16 +95,142 @@ def _frozen_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
 
 def _validate_protocol_version(value: Any) -> int:
     raw = PROTOCOL_VERSION if value in (None, "") else value
+    if isinstance(raw, bool):
+        raise ValueError(f"unparseable agent_interface_version {value!r}")
     try:
         version = int(raw)
     except (TypeError, ValueError):
         raise ValueError(f"unparseable agent_interface_version {value!r}")
-    if version != PROTOCOL_VERSION:
+    if version not in SUPPORTED_PROTOCOL_VERSIONS:
         raise ValueError(
             f"unsupported agent_interface_version {version} "
-            f"(expected {PROTOCOL_VERSION})"
+            f"(supported: {sorted(SUPPORTED_PROTOCOL_VERSIONS)})"
         )
     return version
+
+
+# ---------------------------------------------------------------------------
+# Strict parsing helpers (untrusted payload boundary path)
+# ---------------------------------------------------------------------------
+
+def _require_mapping(payload: Any, where: str) -> dict[str, Any]:
+    if payload is None:
+        return {}
+    if not isinstance(payload, Mapping):
+        raise ValueError(
+            f"{where} payload must be a mapping, got {type(payload).__name__}"
+        )
+    return dict(payload)
+
+
+def _reject_unknown_keys(
+    data: Mapping[str, Any], allowed: frozenset[str], where: str,
+) -> None:
+    unknown = sorted(str(k) for k in data if k not in allowed)
+    if unknown:
+        raise ValueError(f"unknown {where} field(s): {unknown}")
+
+
+def _parse_str(data: Mapping[str, Any], key: str, where: str) -> str:
+    value = data.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{where} field {key!r} must be a string, "
+            f"got {type(value).__name__}"
+        )
+    return value
+
+
+def _parse_str_tuple(
+    data: Mapping[str, Any], key: str, where: str,
+) -> tuple[str, ...]:
+    value = data.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{where} field {key!r} must be a list of strings")
+    out: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{where} field {key!r}[{index}] must be a string, "
+                f"got {type(item).__name__}"
+            )
+        out.append(item)
+    return tuple(out)
+
+
+def _parse_mapping(
+    data: Mapping[str, Any], key: str, where: str,
+) -> Mapping[str, Any]:
+    value = data.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"{where} field {key!r} must be a mapping, "
+            f"got {type(value).__name__}"
+        )
+    return value
+
+
+def _parse_mapping_tuple(
+    data: Mapping[str, Any], key: str, where: str,
+) -> tuple[Mapping[str, Any], ...]:
+    value = data.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{where} field {key!r} must be a list")
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"{where} field {key!r}[{index}] must be a mapping, "
+                f"got {type(item).__name__}"
+            )
+    return tuple(value)
+
+
+def _parse_int(
+    data: Mapping[str, Any], key: str, where: str, default: int,
+) -> int:
+    value = data.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"{where} field {key!r} must be an integer, "
+            f"got {type(value).__name__}"
+        )
+    return value
+
+
+def _parse_bool(
+    data: Mapping[str, Any], key: str, where: str, default: bool,
+) -> bool:
+    value = data.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"{where} field {key!r} must be a boolean, "
+            f"got {type(value).__name__}"
+        )
+    return value
+
+
+_SEMANTIC_CONTEXT_KEYS: frozenset[str] = frozenset({
+    "user_goal",
+    "source_summary",
+    "assumptions",
+    "decisions",
+    "constraints",
+    "expected_outcome",
+    "observations",
+    "extra",
+})
 
 
 @dataclass(frozen=True)
@@ -120,16 +269,19 @@ class SemanticContext:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any] | None) -> "SemanticContext":
-        data = dict(payload or {})
+        data = _require_mapping(payload, "SemanticContext")
+        _reject_unknown_keys(data, _SEMANTIC_CONTEXT_KEYS, "SemanticContext")
         return cls(
-            user_goal=str(data.get("user_goal") or ""),
-            source_summary=str(data.get("source_summary") or ""),
-            assumptions=tuple(data.get("assumptions") or ()),
-            decisions=tuple(data.get("decisions") or ()),
-            constraints=tuple(data.get("constraints") or ()),
-            expected_outcome=str(data.get("expected_outcome") or ""),
-            observations=tuple(data.get("observations") or ()),
-            extra=data.get("extra") if isinstance(data.get("extra"), Mapping) else {},
+            user_goal=_parse_str(data, "user_goal", "SemanticContext"),
+            source_summary=_parse_str(data, "source_summary", "SemanticContext"),
+            assumptions=_parse_str_tuple(data, "assumptions", "SemanticContext"),
+            decisions=_parse_str_tuple(data, "decisions", "SemanticContext"),
+            constraints=_parse_str_tuple(data, "constraints", "SemanticContext"),
+            expected_outcome=_parse_str(
+                data, "expected_outcome", "SemanticContext",
+            ),
+            observations=_parse_str_tuple(data, "observations", "SemanticContext"),
+            extra=_parse_mapping(data, "extra", "SemanticContext"),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -143,6 +295,16 @@ class SemanticContext:
             "observations": list(self.observations),
             "extra": _thaw_value(self.extra),
         }
+
+
+_SEMANTIC_RESULT_KEYS: frozenset[str] = frozenset({
+    "action_summary",
+    "state_changes",
+    "unresolved_questions",
+    "followups",
+    "observations",
+    "extra",
+})
 
 
 @dataclass(frozen=True)
@@ -178,14 +340,17 @@ class SemanticResult:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any] | None) -> "SemanticResult":
-        data = dict(payload or {})
+        data = _require_mapping(payload, "SemanticResult")
+        _reject_unknown_keys(data, _SEMANTIC_RESULT_KEYS, "SemanticResult")
         return cls(
-            action_summary=str(data.get("action_summary") or ""),
-            state_changes=tuple(data.get("state_changes") or ()),
-            unresolved_questions=tuple(data.get("unresolved_questions") or ()),
-            followups=tuple(data.get("followups") or ()),
-            observations=tuple(data.get("observations") or ()),
-            extra=data.get("extra") if isinstance(data.get("extra"), Mapping) else {},
+            action_summary=_parse_str(data, "action_summary", "SemanticResult"),
+            state_changes=_parse_str_tuple(data, "state_changes", "SemanticResult"),
+            unresolved_questions=_parse_str_tuple(
+                data, "unresolved_questions", "SemanticResult",
+            ),
+            followups=_parse_str_tuple(data, "followups", "SemanticResult"),
+            observations=_parse_str_tuple(data, "observations", "SemanticResult"),
+            extra=_parse_mapping(data, "extra", "SemanticResult"),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -197,6 +362,16 @@ class SemanticResult:
             "observations": list(self.observations),
             "extra": _thaw_value(self.extra),
         }
+
+
+_EXECUTION_POLICY_KEYS: frozenset[str] = frozenset({
+    "write_scope",
+    "dependency_keys",
+    "priority",
+    "requires_confirmation",
+    "max_steps",
+    "extra",
+})
 
 
 @dataclass(frozen=True)
@@ -224,14 +399,19 @@ class ExecutionPolicy:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any] | None) -> "ExecutionPolicy":
-        data = dict(payload or {})
+        data = _require_mapping(payload, "ExecutionPolicy")
+        _reject_unknown_keys(data, _EXECUTION_POLICY_KEYS, "ExecutionPolicy")
         return cls(
-            write_scope=tuple(data.get("write_scope") or ()),
-            dependency_keys=tuple(data.get("dependency_keys") or ()),
-            priority=int(data.get("priority", 100) or 100),
-            requires_confirmation=bool(data.get("requires_confirmation") or False),
-            max_steps=int(data.get("max_steps", 1) or 1),
-            extra=data.get("extra") if isinstance(data.get("extra"), Mapping) else {},
+            write_scope=_parse_str_tuple(data, "write_scope", "ExecutionPolicy"),
+            dependency_keys=_parse_str_tuple(
+                data, "dependency_keys", "ExecutionPolicy",
+            ),
+            priority=_parse_int(data, "priority", "ExecutionPolicy", 100),
+            requires_confirmation=_parse_bool(
+                data, "requires_confirmation", "ExecutionPolicy", False,
+            ),
+            max_steps=_parse_int(data, "max_steps", "ExecutionPolicy", 1),
+            extra=_parse_mapping(data, "extra", "ExecutionPolicy"),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -243,6 +423,16 @@ class ExecutionPolicy:
             "max_steps": self.max_steps,
             "extra": _thaw_value(self.extra),
         }
+
+
+_TOOL_EVENT_KEYS: frozenset[str] = frozenset({
+    "name",
+    "args",
+    "result",
+    "status",
+    "ui_preview",
+    "error",
+})
 
 
 @dataclass(frozen=True)
@@ -266,13 +456,15 @@ class ToolEvent:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ToolEvent":
+        data = _require_mapping(payload, "ToolEvent")
+        _reject_unknown_keys(data, _TOOL_EVENT_KEYS, "ToolEvent")
         return cls(
-            name=str(payload.get("name") or ""),
-            args=payload.get("args") if isinstance(payload.get("args"), Mapping) else {},
-            result=str(payload.get("result") or ""),
-            status=str(payload.get("status") or "ok"),
-            ui_preview=str(payload.get("ui_preview") or ""),
-            error=str(payload.get("error") or ""),
+            name=_parse_str(data, "name", "ToolEvent"),
+            args=_parse_mapping(data, "args", "ToolEvent"),
+            result=_parse_str(data, "result", "ToolEvent"),
+            status=_parse_str(data, "status", "ToolEvent") or "ok",
+            ui_preview=_parse_str(data, "ui_preview", "ToolEvent"),
+            error=_parse_str(data, "error", "ToolEvent"),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -284,6 +476,20 @@ class ToolEvent:
             "ui_preview": self.ui_preview,
             "error": self.error,
         }
+
+
+_AGENT_HANDOFF_KEYS: frozenset[str] = frozenset({
+    "agent_interface_version",
+    "handoff_id",
+    "source_agent",
+    "target_agent",
+    "lane",
+    "action",
+    "args",
+    "semantic_context",
+    "execution_policy",
+    "warnings",
+})
 
 
 @dataclass(frozen=True)
@@ -335,29 +541,25 @@ class AgentHandoff:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "AgentHandoff":
+        data = _require_mapping(payload, "AgentHandoff")
+        _reject_unknown_keys(data, _AGENT_HANDOFF_KEYS, "AgentHandoff")
         return cls(
             protocol_version=_validate_protocol_version(
-                payload.get("agent_interface_version", PROTOCOL_VERSION),
+                data.get("agent_interface_version", PROTOCOL_VERSION),
             ),
-            handoff_id=str(payload.get("handoff_id") or ""),
-            source_agent=str(payload.get("source_agent") or "host"),
-            target_agent=str(payload.get("target_agent") or ""),
-            lane=str(payload.get("lane") or ""),
-            action=str(payload.get("action") or ""),
-            args=payload.get("args")
-            if isinstance(payload.get("args"), Mapping)
-            else {},
+            handoff_id=_parse_str(data, "handoff_id", "AgentHandoff"),
+            source_agent=_parse_str(data, "source_agent", "AgentHandoff") or "host",
+            target_agent=_parse_str(data, "target_agent", "AgentHandoff"),
+            lane=_parse_str(data, "lane", "AgentHandoff"),
+            action=_parse_str(data, "action", "AgentHandoff"),
+            args=_parse_mapping(data, "args", "AgentHandoff"),
             semantic_context=SemanticContext.from_payload(
-                payload.get("semantic_context")
-                if isinstance(payload.get("semantic_context"), Mapping)
-                else {},
+                _parse_mapping(data, "semantic_context", "AgentHandoff"),
             ),
             execution_policy=ExecutionPolicy.from_payload(
-                payload.get("execution_policy")
-                if isinstance(payload.get("execution_policy"), Mapping)
-                else {},
+                _parse_mapping(data, "execution_policy", "AgentHandoff"),
             ),
-            warnings=tuple(payload.get("warnings") or ()),
+            warnings=_parse_str_tuple(data, "warnings", "AgentHandoff"),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -373,6 +575,19 @@ class AgentHandoff:
             "execution_policy": self.execution_policy.to_payload(),
             "warnings": list(self.warnings),
         }
+
+
+_AGENT_STEP_RESULT_KEYS: frozenset[str] = frozenset({
+    "agent_interface_version",
+    "status",
+    "user_visible_response",
+    "semantic_result",
+    "tool_events",
+    "question",
+    "error",
+    "updated_handoff",
+    "telemetry",
+})
 
 
 @dataclass(frozen=True)
@@ -428,33 +643,36 @@ class AgentStepResult:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "AgentStepResult":
-        updated = payload.get("updated_handoff")
-        status = str(payload.get("status") or "completed")
+        data = _require_mapping(payload, "AgentStepResult")
+        _reject_unknown_keys(data, _AGENT_STEP_RESULT_KEYS, "AgentStepResult")
+        status = _parse_str(data, "status", "AgentStepResult") or "completed"
         if status not in AGENT_STEP_STATUSES:
             raise ValueError(f"unknown AgentStepResult status: {status!r}")
+        updated = data.get("updated_handoff")
         return cls(
             status=status,  # type: ignore[arg-type]
-            user_visible_response=str(payload.get("user_visible_response") or ""),
+            user_visible_response=_parse_str(
+                data, "user_visible_response", "AgentStepResult",
+            ),
             semantic_result=SemanticResult.from_payload(
-                payload.get("semantic_result")
-                if isinstance(payload.get("semantic_result"), Mapping)
-                else {},
+                _parse_mapping(data, "semantic_result", "AgentStepResult"),
             ),
             tool_events=tuple(
                 ToolEvent.from_payload(ev)
-                for ev in payload.get("tool_events", ())
-                if isinstance(ev, Mapping)
+                for ev in _parse_mapping_tuple(
+                    data, "tool_events", "AgentStepResult",
+                )
             ),
-            question=str(payload.get("question") or ""),
-            error=str(payload.get("error") or ""),
-            updated_handoff=AgentHandoff.from_payload(updated)
-            if isinstance(updated, Mapping)
-            else None,
-            telemetry=payload.get("telemetry")
-            if isinstance(payload.get("telemetry"), Mapping)
-            else {},
+            question=_parse_str(data, "question", "AgentStepResult"),
+            error=_parse_str(data, "error", "AgentStepResult"),
+            updated_handoff=(
+                AgentHandoff.from_payload(updated)
+                if updated is not None
+                else None
+            ),
+            telemetry=_parse_mapping(data, "telemetry", "AgentStepResult"),
             protocol_version=_validate_protocol_version(
-                payload.get("agent_interface_version", PROTOCOL_VERSION),
+                data.get("agent_interface_version", PROTOCOL_VERSION),
             ),
         )
 
