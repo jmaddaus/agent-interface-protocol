@@ -1349,7 +1349,10 @@ def _validate_message_payload(kind: str, payload: Mapping[str, Any]) -> None:
         _parse_str(payload, "reason", where)
     elif kind == "ack":
         _reject_unknown_keys(payload, _MESSAGE_ACK_KEYS, where)
-        if "accepted" not in payload:
+        # Presence is not enough — ``{"accepted": null}`` would otherwise
+        # slip through and ``_parse_bool`` would silently treat the missing
+        # value as ``False``. Match the schema, which rejects null.
+        if payload.get("accepted") is None:
             raise ValueError(
                 f"{where} field 'accepted' is required for ack messages"
             )
