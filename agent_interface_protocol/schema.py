@@ -11,6 +11,18 @@ widens its supported version range or adds new kinds, the schemas
 change; regenerate the static files under ``schemas/`` with
 ``python scripts/generate_schemas.py``.
 
+Necessary-but-not-sufficient
+----------------------------
+The schemas are a structural gate, not a semantic one. They enforce
+type, enum, and unknown-field rejection — matching ``from_payload`` at
+the trust boundary — but they intentionally do not require fields that
+the Python DTOs default. For example, ``{"kind": "handoff"}`` with no
+``payload`` passes schema validation because the envelope's only
+required field is ``kind``; a real handoff still needs ``payload`` to
+be meaningful. Non-Python consumers should treat schema validation as
+a necessary first pass and run the same domain checks AIP's
+``from_payload`` would apply.
+
 Usage::
 
     from agent_interface_protocol.schema import (
@@ -29,7 +41,6 @@ Usage::
 """
 from __future__ import annotations
 
-import copy
 from typing import Any
 
 from agent_interface_protocol.agent_interface import (
@@ -402,6 +413,55 @@ def _agent_message_payload_branches() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Reachability: include only the ``$defs`` that a given schema actually
+# references (transitively). Validators ignore unused ``$defs`` so this
+# is purely cosmetic, but committed JSON files are smaller and easier
+# to read on GitHub when each schema carries only what it needs.
+# ---------------------------------------------------------------------------
+
+_REF_PREFIX = "#/$defs/"
+
+
+def _collect_refs(node: Any, found: set[str]) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if (
+                key == "$ref"
+                and isinstance(value, str)
+                and value.startswith(_REF_PREFIX)
+            ):
+                found.add(value[len(_REF_PREFIX):])
+            else:
+                _collect_refs(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_refs(item, found)
+
+
+def _reachable_defs(body: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Transitive closure of ``$defs`` reachable from ``body`` via ``$ref``.
+
+    Walks the schema body, collects every ``$ref`` target, and follows
+    each target's own refs until the closure is stable.
+    """
+    all_defs = _all_definitions()
+    seen: set[str] = set()
+    frontier: set[str] = set()
+    _collect_refs(body, frontier)
+    while frontier:
+        nxt: set[str] = set()
+        for name in frontier:
+            if name in seen or name not in all_defs:
+                continue
+            seen.add(name)
+            inner: set[str] = set()
+            _collect_refs(all_defs[name], inner)
+            nxt.update(inner - seen)
+        frontier = nxt
+    return {name: all_defs[name] for name in sorted(seen)}
+
+
+# ---------------------------------------------------------------------------
 # Top-level builders
 # ---------------------------------------------------------------------------
 
@@ -439,11 +499,17 @@ def _build_agent_step_event_schema(*, include_defs: bool) -> dict[str, Any]:
         "oneOf": _step_event_body_branches(),
     }
     if include_defs:
-        schema = {"$schema": SCHEMA_DIALECT, **schema, "$defs": _all_definitions()}
+        body = {k: v for k, v in schema.items()}
+        schema = {
+            "$schema": SCHEMA_DIALECT,
+            **schema,
+            "$defs": _reachable_defs(body),
+        }
     return schema
 
 
 def agent_handoff_schema() -> dict[str, Any]:
+    body = _agent_handoff_def()
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "AgentHandoff",
@@ -451,18 +517,19 @@ def agent_handoff_schema() -> dict[str, Any]:
             "Immutable handoff between agents. Carries executable args, "
             "semantic context, and execution policy."
         ),
-        **_agent_handoff_def(),
-        "$defs": _all_definitions(),
+        **body,
+        "$defs": _reachable_defs(body),
     }
 
 
 def agent_step_result_schema() -> dict[str, Any]:
+    body = _agent_step_result_def()
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "AgentStepResult",
         "description": "Immutable result of one target-agent step.",
-        **_agent_step_result_def(),
-        "$defs": _all_definitions(),
+        **body,
+        "$defs": _reachable_defs(body),
     }
 
 
@@ -471,14 +538,7 @@ def agent_step_event_schema() -> dict[str, Any]:
 
 
 def agent_message_schema() -> dict[str, Any]:
-    return {
-        "$schema": SCHEMA_DIALECT,
-        "title": "AgentMessage",
-        "description": (
-            "Transport envelope carrying one AIP payload between agents. "
-            "Owns addressing, correlation, and timing; the payload is "
-            "discriminated by kind."
-        ),
+    body: dict[str, Any] = {
         "type": "object",
         "additionalProperties": False,
         "required": ["kind"],
@@ -510,7 +570,17 @@ def agent_message_schema() -> dict[str, Any]:
             },
         },
         "oneOf": _agent_message_payload_branches(),
-        "$defs": _all_definitions(),
+    }
+    return {
+        "$schema": SCHEMA_DIALECT,
+        "title": "AgentMessage",
+        "description": (
+            "Transport envelope carrying one AIP payload between agents. "
+            "Owns addressing, correlation, and timing; the payload is "
+            "discriminated by kind."
+        ),
+        **body,
+        "$defs": _reachable_defs(body),
     }
 
 

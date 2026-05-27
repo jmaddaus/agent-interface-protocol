@@ -375,11 +375,22 @@ ls schemas/
 # SemanticContext.json  SemanticResult.json  ToolEvent.json
 ```
 
-Each schema is self-contained with its own `$defs` for nested types.
+Each schema is self-contained with its own `$defs` for nested types,
+pruned to only those reachable from `$ref` in the schema body.
 Discriminated unions (`AgentMessage.kind`, `AgentStepEvent.kind`) use
 `oneOf` with `const` on the kind and the corresponding payload/body
 shape per branch — cross-kind payloads fail validation the same way
 they do in Python's `from_payload`.
+
+**Necessary, not sufficient.** The schemas are a structural gate
+matching `from_payload` at the trust boundary (type checking, enum
+validation, unknown-field rejection). They do **not** require fields
+that the Python DTOs default — for example, `{"kind": "handoff"}`
+passes envelope validation because `kind` is the only required field,
+even though a real handoff needs `payload` to be meaningful.
+Non-Python consumers should treat schema validation as a necessary
+first pass and run the same domain checks AIP's `from_payload` would
+apply.
 
 The schemas reflect *this* build of AIP — the protocol version range
 and the event/message kind sets are pinned to what this version

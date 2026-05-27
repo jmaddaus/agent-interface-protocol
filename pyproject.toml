@@ -24,6 +24,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+# Required to exercise tests that validate AIP payloads against the
+# JSON Schemas in agent_interface_protocol.schema. Without these,
+# pytest.importorskip silently skips schema validation coverage.
+# 4.18+ supports JSON Schema Draft 2020-12.
+test = ["jsonschema>=4.18"]
+
 [project.urls]
 Homepage = "https://github.com/jmaddaus/agent-interface-protocol"
 Source = "https://github.com/jmaddaus/agent-interface-protocol"
