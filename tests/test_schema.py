@@ -46,6 +46,42 @@ def test_all_schemas_validate_against_meta_schema():
 
 
 # ---------------------------------------------------------------------------
+# Cross-vendor flatness invariants — keep schemas portable across
+# validators and LLM structured-output systems. If you intentionally need
+# $defs/$ref/oneOf, update both the generator and these assertions.
+# ---------------------------------------------------------------------------
+
+
+def _walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk(item)
+
+
+def test_no_defs_or_refs_anywhere():
+    for name, schema in json_schemas().items():
+        for node in _walk(schema):
+            assert "$defs" not in node, f"{name}: $defs found"
+            assert "$ref" not in node, f"{name}: $ref found"
+
+
+def test_no_one_of_anywhere():
+    """``anyOf`` is broadly supported; ``oneOf`` is not (OpenAI strict
+    structured outputs only supports ``anyOf``, and Gemini historically
+    rejected ``oneOf``). The discriminated unions use ``anyOf`` keyed by
+    a ``kind`` const, which is semantically equivalent here because
+    branches are mutually exclusive.
+    """
+    for name, schema in json_schemas().items():
+        for node in _walk(schema):
+            assert "oneOf" not in node, f"{name}: oneOf found"
+
+
+# ---------------------------------------------------------------------------
 # Real payloads validate against their schemas
 # ---------------------------------------------------------------------------
 

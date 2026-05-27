@@ -1,6 +1,21 @@
 {
-  "$defs": {
-    "ExecutionPolicy": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Immutable handoff between agents. Carries executable args, semantic context, and execution policy.",
+  "properties": {
+    "action": {
+      "type": "string"
+    },
+    "agent_interface_version": {
+      "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
+      "maximum": 3,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "args": {
+      "type": "object"
+    },
+    "execution_policy": {
       "additionalProperties": false,
       "properties": {
         "dependency_keys": {
@@ -30,7 +45,13 @@
       },
       "type": "object"
     },
-    "SemanticContext": {
+    "handoff_id": {
+      "type": "string"
+    },
+    "lane": {
+      "type": "string"
+    },
+    "semantic_context": {
       "additionalProperties": false,
       "properties": {
         "assumptions": {
@@ -71,35 +92,6 @@
         }
       },
       "type": "object"
-    }
-  },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "description": "Immutable handoff between agents. Carries executable args, semantic context, and execution policy.",
-  "properties": {
-    "action": {
-      "type": "string"
-    },
-    "agent_interface_version": {
-      "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
-      "maximum": 3,
-      "minimum": 1,
-      "type": "integer"
-    },
-    "args": {
-      "type": "object"
-    },
-    "execution_policy": {
-      "$ref": "#/$defs/ExecutionPolicy"
-    },
-    "handoff_id": {
-      "type": "string"
-    },
-    "lane": {
-      "type": "string"
-    },
-    "semantic_context": {
-      "$ref": "#/$defs/SemanticContext"
     },
     "source_agent": {
       "type": "string"

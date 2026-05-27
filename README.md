@@ -376,12 +376,24 @@ ls agent_interface_protocol/schemas/
 # SemanticContext.json  SemanticResult.json  ToolEvent.json
 ```
 
-Each schema is self-contained with its own `$defs` for nested types,
-pruned to only those reachable from `$ref` in the schema body.
-Discriminated unions (`AgentMessage.kind`, `AgentStepEvent.kind`) use
-`oneOf` with `const` on the kind and the corresponding payload/body
-shape per branch — cross-kind payloads fail validation the same way
-they do in Python's `from_payload`.
+Each schema is **flat and self-contained**: every nested type is
+inlined directly, with no `$defs` and no `$ref`. Discriminated unions
+(`AgentMessage.kind`, `AgentStepEvent.kind`) use `anyOf` with `const`
+on the kind and the corresponding payload/body shape per branch —
+cross-kind payloads fail validation the same way they do in Python's
+`from_payload`. The shape ports cleanly across validators (ajv,
+jsonschema, gojsonschema), Anthropic tool_use, and Gemini structured
+output without `$ref` resolution.
+
+**OpenAI strict structured outputs caveat.** AIP's open extension
+fields (`args`, `extra`, `telemetry`, `payload`, `body`, `details`,
+`budget`, `metrics`, `state`, `schema`) remain `{"type": "object"}`
+because the protocol's extensibility hinges on them being free-form.
+OpenAI's strict `response_format` mode requires every object to
+declare `properties` and forbids open objects, so these schemas are
+not drop-in for OpenAI strict mode. Use Anthropic tool_use, Gemini,
+non-strict OpenAI function calling, or string-encode extension data
+at the caller when targeting OpenAI strict.
 
 **Necessary, not sufficient.** The schemas are a structural gate
 matching `from_payload` at the trust boundary (type checking, enum

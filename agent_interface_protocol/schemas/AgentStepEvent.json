@@ -1,317 +1,7 @@
 {
-  "$defs": {
-    "AgentHandoff": {
-      "additionalProperties": false,
-      "properties": {
-        "action": {
-          "type": "string"
-        },
-        "agent_interface_version": {
-          "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
-          "maximum": 3,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "args": {
-          "type": "object"
-        },
-        "execution_policy": {
-          "$ref": "#/$defs/ExecutionPolicy"
-        },
-        "handoff_id": {
-          "type": "string"
-        },
-        "lane": {
-          "type": "string"
-        },
-        "semantic_context": {
-          "$ref": "#/$defs/SemanticContext"
-        },
-        "source_agent": {
-          "type": "string"
-        },
-        "target_agent": {
-          "type": "string"
-        },
-        "warnings": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "AgentStepResult": {
-      "additionalProperties": false,
-      "properties": {
-        "agent_interface_version": {
-          "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
-          "maximum": 3,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "error": {
-          "type": "string"
-        },
-        "question": {
-          "type": "string"
-        },
-        "semantic_result": {
-          "$ref": "#/$defs/SemanticResult"
-        },
-        "status": {
-          "enum": [
-            "awaiting_input",
-            "completed",
-            "failed",
-            "noop",
-            "retry_scheduled"
-          ],
-          "type": "string"
-        },
-        "telemetry": {
-          "type": "object"
-        },
-        "tool_events": {
-          "items": {
-            "$ref": "#/$defs/ToolEvent"
-          },
-          "type": "array"
-        },
-        "updated_handoff": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/AgentHandoff"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "user_visible_response": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "status"
-      ],
-      "type": "object"
-    },
-    "ExecutionPolicy": {
-      "additionalProperties": false,
-      "properties": {
-        "dependency_keys": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "extra": {
-          "type": "object"
-        },
-        "max_steps": {
-          "type": "integer"
-        },
-        "priority": {
-          "type": "integer"
-        },
-        "requires_confirmation": {
-          "type": "boolean"
-        },
-        "write_scope": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "HarnessPolicy": {
-      "additionalProperties": false,
-      "properties": {
-        "allowed_tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "budget": {
-          "type": "object"
-        },
-        "contract_id": {
-          "type": "string"
-        },
-        "extra": {
-          "type": "object"
-        },
-        "max_steps": {
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "max_tool_calls": {
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "required_outputs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "requires_self_evaluation": {
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "OrchestrationContext": {
-      "additionalProperties": false,
-      "properties": {
-        "capability": {
-          "type": "string"
-        },
-        "checkpoint_id": {
-          "type": "string"
-        },
-        "extra": {
-          "type": "object"
-        },
-        "fanout_group_id": {
-          "type": "string"
-        },
-        "parent_step_id": {
-          "type": "string"
-        },
-        "phase": {
-          "type": "string"
-        },
-        "root_handoff_id": {
-          "type": "string"
-        },
-        "run_id": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "SemanticContext": {
-      "additionalProperties": false,
-      "properties": {
-        "assumptions": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "constraints": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "decisions": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "expected_outcome": {
-          "type": "string"
-        },
-        "extra": {
-          "type": "object"
-        },
-        "observations": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "source_summary": {
-          "type": "string"
-        },
-        "user_goal": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "SemanticResult": {
-      "additionalProperties": false,
-      "properties": {
-        "action_summary": {
-          "type": "string"
-        },
-        "extra": {
-          "type": "object"
-        },
-        "followups": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "observations": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "state_changes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "unresolved_questions": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "ToolEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "args": {
-          "type": "object"
-        },
-        "error": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "result": {
-          "type": "string"
-        },
-        "status": {
-          "type": "string"
-        },
-        "ui_preview": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One event in the timeline of a single agent step.",
-  "oneOf": [
+  "anyOf": [
     {
       "properties": {
         "body": {
@@ -348,7 +38,28 @@
     {
       "properties": {
         "body": {
-          "$ref": "#/$defs/ToolEvent"
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "type": "object"
+            },
+            "error": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "result": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "ui_preview": {
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "kind": {
           "const": "tool_event"
@@ -396,7 +107,215 @@
     {
       "properties": {
         "body": {
-          "$ref": "#/$defs/AgentStepResult"
+          "additionalProperties": false,
+          "properties": {
+            "agent_interface_version": {
+              "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
+              "maximum": 3,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "error": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            },
+            "semantic_result": {
+              "additionalProperties": false,
+              "properties": {
+                "action_summary": {
+                  "type": "string"
+                },
+                "extra": {
+                  "type": "object"
+                },
+                "followups": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "observations": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "state_changes": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "unresolved_questions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "status": {
+              "enum": [
+                "awaiting_input",
+                "completed",
+                "failed",
+                "noop",
+                "retry_scheduled"
+              ],
+              "type": "string"
+            },
+            "telemetry": {
+              "type": "object"
+            },
+            "tool_events": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "args": {
+                    "type": "object"
+                  },
+                  "error": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "result": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "ui_preview": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "updated_handoff": {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "type": "string"
+                },
+                "agent_interface_version": {
+                  "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
+                  "maximum": 3,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "args": {
+                  "type": "object"
+                },
+                "execution_policy": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dependency_keys": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "extra": {
+                      "type": "object"
+                    },
+                    "max_steps": {
+                      "type": "integer"
+                    },
+                    "priority": {
+                      "type": "integer"
+                    },
+                    "requires_confirmation": {
+                      "type": "boolean"
+                    },
+                    "write_scope": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "handoff_id": {
+                  "type": "string"
+                },
+                "lane": {
+                  "type": "string"
+                },
+                "semantic_context": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "assumptions": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "constraints": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "decisions": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "expected_outcome": {
+                      "type": "string"
+                    },
+                    "extra": {
+                      "type": "object"
+                    },
+                    "observations": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "source_summary": {
+                      "type": "string"
+                    },
+                    "user_goal": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "source_agent": {
+                  "type": "string"
+                },
+                "target_agent": {
+                  "type": "string"
+                },
+                "warnings": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "user_visible_response": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
         },
         "kind": {
           "const": "final"
@@ -495,6 +414,7 @@
       }
     }
   ],
+  "description": "One event in the timeline of a single agent step.",
   "properties": {
     "body": {
       "type": "object"
@@ -503,13 +423,50 @@
       "type": "string"
     },
     "harness_policy": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/HarnessPolicy"
+      "additionalProperties": false,
+      "properties": {
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
-        {
-          "type": "null"
+        "budget": {
+          "type": "object"
+        },
+        "contract_id": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "max_steps": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_tool_calls": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "required_outputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requires_self_evaluation": {
+          "type": "boolean"
         }
+      },
+      "type": [
+        "object",
+        "null"
       ]
     },
     "kind": {
@@ -528,13 +485,39 @@
       "type": "string"
     },
     "orchestration": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/OrchestrationContext"
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "type": "string"
         },
-        {
-          "type": "null"
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "fanout_group_id": {
+          "type": "string"
+        },
+        "parent_step_id": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "root_handoff_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": "string"
         }
+      },
+      "type": [
+        "object",
+        "null"
       ]
     },
     "seq": {
