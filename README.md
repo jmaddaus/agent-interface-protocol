@@ -345,6 +345,47 @@ AIP does not own:
 
 A consuming application should adapt those implementation details into `AgentHandoff` and `AgentStepResult`.
 
+## Reference Implementations
+
+The package ships a small `agent_interface_protocol.reference` module
+with helpers for wiring the DTOs together in a single process. These
+are **not** part of the stable protocol surface — they are reference
+behavior for tests, demos, and simple single-process consumers, and
+may evolve faster than the core DTOs. Import them explicitly:
+
+```python
+from agent_interface_protocol.reference import (
+    InProcessBus,
+    SyncStreamAdapter,
+)
+```
+
+**`SyncStreamAdapter`** exposes a `StreamingAgentExecutor` through the
+sync `AgentExecutor.step` contract. It drains `stream(handoff)`,
+enforces invariants 9 and 10 (strictly-increasing `seq`, exactly one
+terminal `final` event, no post-`final` events), and returns the
+`AgentStepResult` from the `final` event:
+
+```python
+adapter = SyncStreamAdapter(streaming_executor)
+result = adapter.step(handoff)  # or handoff.to_payload()
+```
+
+**`InProcessBus`** is a tiny in-memory pub/sub for `AgentMessage`
+envelopes. Synchronous, in-publish-order delivery to all subscribers
+of the recipient address; logs every published message for test
+assertions:
+
+```python
+bus = InProcessBus()
+bus.subscribe("host@svc", received.append)
+bus.publish(AgentMessage(kind="ack", recipient="host@svc", ...))
+assert bus.log == (...)
+```
+
+Production transports (queues, websockets, gRPC streams) are not in
+scope for this package — see "What AIP Does Not Own."
+
 ## Development
 
 Run tests from the repository root:
