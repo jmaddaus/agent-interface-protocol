@@ -70,6 +70,9 @@ def _freeze_value(value: Any) -> Any:
     if isinstance(value, list):
         return tuple(_freeze_value(v) for v in value)
     if isinstance(value, set):
+        # JSON has no set type; serialize to a deterministic tuple. ``key=str``
+        # gives a stable ordering even for heterogeneous element types where
+        # natural comparison would raise.
         return tuple(_freeze_value(v) for v in sorted(value, key=str))
     return value
 
@@ -739,7 +742,12 @@ class AgentStepResult:
     def from_payload(cls, payload: Mapping[str, Any]) -> "AgentStepResult":
         data = _require_mapping(payload, "AgentStepResult")
         _reject_unknown_keys(data, _AGENT_STEP_RESULT_KEYS, "AgentStepResult")
-        status = _parse_str(data, "status", "AgentStepResult") or "completed"
+        if "status" not in data or data["status"] in (None, ""):
+            raise ValueError(
+                "AgentStepResult field 'status' is required; "
+                f"valid values: {sorted(AGENT_STEP_STATUSES)}"
+            )
+        status = _parse_str(data, "status", "AgentStepResult")
         if status not in AGENT_STEP_STATUSES:
             raise ValueError(f"unknown AgentStepResult status: {status!r}")
         updated = data.get("updated_handoff")
@@ -1333,10 +1341,18 @@ def _validate_message_payload(kind: str, payload: Mapping[str, Any]) -> None:
         AgentStepResult.from_payload(payload)
     elif kind == "cancel":
         _reject_unknown_keys(payload, _MESSAGE_CANCEL_KEYS, where)
+        if not payload.get("handoff_id"):
+            raise ValueError(
+                f"{where} field 'handoff_id' is required for cancel messages"
+            )
         _parse_str(payload, "handoff_id", where)
         _parse_str(payload, "reason", where)
     elif kind == "ack":
         _reject_unknown_keys(payload, _MESSAGE_ACK_KEYS, where)
+        if "accepted" not in payload:
+            raise ValueError(
+                f"{where} field 'accepted' is required for ack messages"
+            )
         _parse_bool(payload, "accepted", where, False)
         _parse_str(payload, "reason", where)
     elif kind == "error":

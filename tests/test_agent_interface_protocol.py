@@ -138,6 +138,17 @@ def test_step_result_rejects_unknown_status():
         AgentStepResult(status="complete-ish")  # type: ignore[arg-type]
 
 
+def test_step_result_requires_status_at_parse_boundary():
+    """from_payload must not silently default missing/empty status — the
+    Python constructor requires it, and the boundary should match."""
+    with pytest.raises(ValueError, match="'status' is required"):
+        AgentStepResult.from_payload({})
+    with pytest.raises(ValueError, match="'status' is required"):
+        AgentStepResult.from_payload({"status": ""})
+    with pytest.raises(ValueError, match="'status' is required"):
+        AgentStepResult.from_payload({"status": None})
+
+
 def test_step_result_rejects_unsupported_protocol_version():
     with pytest.raises(ValueError, match="unsupported agent_interface_version"):
         AgentStepResult.from_payload({

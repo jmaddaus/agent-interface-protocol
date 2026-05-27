@@ -227,6 +227,9 @@
       "type": "string"
     }
   },
+  "required": [
+    "status"
+  ],
   "title": "AgentStepResult",
   "type": "object"
 }
