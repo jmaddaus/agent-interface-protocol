@@ -1,0 +1,723 @@
+{
+  "$defs": {
+    "AgentHandoff": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "agent_interface_version": {
+          "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "args": {
+          "type": "object"
+        },
+        "execution_policy": {
+          "$ref": "#/$defs/ExecutionPolicy"
+        },
+        "handoff_id": {
+          "type": "string"
+        },
+        "lane": {
+          "type": "string"
+        },
+        "semantic_context": {
+          "$ref": "#/$defs/SemanticContext"
+        },
+        "source_agent": {
+          "type": "string"
+        },
+        "target_agent": {
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "AgentStepEvent": {
+      "additionalProperties": false,
+      "description": "One event in the timeline of a single agent step.",
+      "oneOf": [
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "kind": {
+              "const": "accepted"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "properties": {
+                "fraction": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "progress"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ToolEvent"
+            },
+            "kind": {
+              "const": "tool_event"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "properties": {
+                "delta": {
+                  "type": "boolean"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "partial_response"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "properties": {
+                "question": {
+                  "type": "string"
+                },
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "question"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/AgentStepResult"
+            },
+            "kind": {
+              "const": "final"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "phase": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "phase_started"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "properties": {
+                "metrics": {
+                  "type": "object"
+                },
+                "phase": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "phase_completed"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "properties": {
+                "checkpoint_id": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "checkpoint"
+            }
+          }
+        },
+        {
+          "properties": {
+            "body": {
+              "additionalProperties": false,
+              "properties": {
+                "details": {
+                  "type": "object"
+                },
+                "findings": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "score": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "evaluation"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "body": {
+          "type": "object"
+        },
+        "handoff_id": {
+          "type": "string"
+        },
+        "harness_policy": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HarnessPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "accepted",
+            "checkpoint",
+            "evaluation",
+            "final",
+            "partial_response",
+            "phase_completed",
+            "phase_started",
+            "progress",
+            "question",
+            "tool_event"
+          ],
+          "type": "string"
+        },
+        "orchestration": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/OrchestrationContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "ts": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "AgentStepEvent",
+      "type": "object"
+    },
+    "AgentStepResult": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_interface_version": {
+          "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "error": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "semantic_result": {
+          "$ref": "#/$defs/SemanticResult"
+        },
+        "status": {
+          "enum": [
+            "awaiting_input",
+            "completed",
+            "failed",
+            "noop",
+            "retry_scheduled"
+          ],
+          "type": "string"
+        },
+        "telemetry": {
+          "type": "object"
+        },
+        "tool_events": {
+          "items": {
+            "$ref": "#/$defs/ToolEvent"
+          },
+          "type": "array"
+        },
+        "updated_handoff": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AgentHandoff"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_visible_response": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ErrorInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retriable": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ExecutionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "dependency_keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "max_steps": {
+          "type": "integer"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "requires_confirmation": {
+          "type": "boolean"
+        },
+        "write_scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "HarnessPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "budget": {
+          "type": "object"
+        },
+        "contract_id": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "max_steps": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_tool_calls": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "required_outputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requires_self_evaluation": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "OrchestrationContext": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "fanout_group_id": {
+          "type": "string"
+        },
+        "parent_step_id": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "root_handoff_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SemanticContext": {
+      "additionalProperties": false,
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "expected_outcome": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "observations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source_summary": {
+          "type": "string"
+        },
+        "user_goal": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SemanticResult": {
+      "additionalProperties": false,
+      "properties": {
+        "action_summary": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "followups": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "observations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "state_changes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unresolved_questions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ToolEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "type": "object"
+        },
+        "error": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "ui_preview": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Transport envelope carrying one AIP payload between agents. Owns addressing, correlation, and timing; the payload is discriminated by kind.",
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "const": "handoff"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentHandoff"
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "step_event"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentStepEvent"
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "step_result"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentStepResult"
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "cancel"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "handoff_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "ack"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "accepted": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "error"
+        },
+        "payload": {
+          "$ref": "#/$defs/ErrorInfo"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "agent_interface_version": {
+      "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
+      "maximum": 3,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "harness_policy": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HarnessPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "in_reply_to": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "ack",
+        "cancel",
+        "error",
+        "handoff",
+        "step_event",
+        "step_result"
+      ],
+      "type": "string"
+    },
+    "message_id": {
+      "type": "string"
+    },
+    "orchestration": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/OrchestrationContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "recipient": {
+      "type": "string"
+    },
+    "sender": {
+      "type": "string"
+    },
+    "sent_at": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "AgentMessage",
+  "type": "object"
+}

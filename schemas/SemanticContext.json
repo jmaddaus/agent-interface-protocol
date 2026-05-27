@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "constraints": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "decisions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "expected_outcome": {
+      "type": "string"
+    },
+    "extra": {
+      "type": "object"
+    },
+    "observations": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "source_summary": {
+      "type": "string"
+    },
+    "user_goal": {
+      "type": "string"
+    }
+  },
+  "title": "SemanticContext",
+  "type": "object"
+}

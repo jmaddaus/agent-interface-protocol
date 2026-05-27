@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "allowed_tools": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "budget": {
+      "type": "object"
+    },
+    "contract_id": {
+      "type": "string"
+    },
+    "extra": {
+      "type": "object"
+    },
+    "max_steps": {
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "max_tool_calls": {
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "required_outputs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "requires_self_evaluation": {
+      "type": "boolean"
+    }
+  },
+  "title": "HarnessPolicy",
+  "type": "object"
+}
