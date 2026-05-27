@@ -25,6 +25,39 @@ Example downstream usage::
 The composite helpers raise ``AssertionError`` on the first invariant
 violation; per-invariant helpers are exposed for cases where a
 downstream wants more granular control over what they assert.
+
+Belt-and-suspenders vs. load-bearing
+------------------------------------
+Some per-event shape checks are unreachable for genuinely-constructed
+``AgentStepEvent`` instances because ``AgentStepEvent.__post_init__``
+already rejects unknown ``kind`` values and validates per-kind body
+shapes (a ``kind="final"`` body, for example, is re-parsed through
+``AgentStepResult.from_payload``). The load-bearing checks are the
+ones that can fail on a real, parsed event:
+
+* :func:`assert_events_are_step_events` — catches raw dicts /
+  duck-typed objects slipping into a stream;
+* :func:`assert_seq_strictly_increasing` — orderings the DTO does not
+  enforce;
+* :func:`assert_exactly_one_final` — terminal contract spanning
+  multiple events;
+* :func:`assert_no_events_after_final` — terminal contract.
+
+:func:`assert_kinds_are_known` and :func:`assert_final_body_is_step_result`
+are kept as belt-and-suspenders guards against producers that bypass
+the DTO constructor (e.g. hand-rolled mocks or subclasses that override
+``__post_init__``).
+
+Scope: one stream, one step
+---------------------------
+:func:`assert_event_stream_conformant` and the per-invariant helpers
+assume the iterable describes **one** step — i.e. a single
+``(handoff_id, step_id)`` pair, which is what
+``StreamingAgentExecutor.stream(handoff)`` produces. Feeding a
+helper an iterable that interleaves multiple steps will produce
+spurious ``seq`` and ``final`` failures. Group by
+``(handoff_id, step_id)`` before checking, or call the helpers once
+per step.
 """
 from __future__ import annotations
 
@@ -73,7 +106,13 @@ def assert_kinds_are_known(events: Iterable[AgentStepEvent]) -> None:
 
 
 def assert_seq_strictly_increasing(events: Iterable[AgentStepEvent]) -> None:
-    """``seq`` must be non-negative and strictly increasing per stream."""
+    """``seq`` must be non-negative and strictly increasing per stream.
+
+    The protocol scopes ``seq`` monotonicity per ``(handoff_id, step_id)``
+    pair, not globally. This helper checks a single stream — pass it
+    one step's events at a time. For an iterable that interleaves
+    multiple steps, group by ``(handoff_id, step_id)`` first.
+    """
     last = -1
     for i, event in enumerate(events):
         if event.seq < 0:
@@ -150,12 +189,27 @@ def assert_event_stream_conformant(
 
     Returns the parsed ``AgentStepResult`` on success. Raises
     ``AssertionError`` on the first violation.
+
+    Assumes a single-step stream (one ``(handoff_id, step_id)`` pair).
+    See the module docstring for what to do with multi-step iterables.
     """
     materialized = assert_events_are_step_events(events)
     assert_kinds_are_known(materialized)
     assert_seq_strictly_increasing(materialized)
-    assert_no_events_after_final(materialized)
-    return assert_final_body_is_step_result(materialized)
+    final_index = assert_exactly_one_final(materialized)
+    if final_index != len(materialized) - 1:
+        trailing = [e.kind for e in materialized[final_index + 1:]]
+        raise AssertionError(
+            f"events emitted after terminal 'final' at index "
+            f"{final_index}: {trailing}"
+        )
+    final = materialized[final_index]
+    try:
+        return AgentStepResult.from_payload(final.body)
+    except (ValueError, TypeError) as exc:
+        raise AssertionError(
+            f"final event body did not parse as AgentStepResult: {exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +248,7 @@ def assert_streaming_executor_conformant(
 
     try:
         executor.validate_handoff(sample_handoff)
-    except Exception as exc:  # pragma: no cover — informational re-raise
+    except Exception as exc:
         raise AssertionError(
             f"executor.validate_handoff rejected a well-formed sample "
             f"handoff: {exc!r}"
@@ -205,7 +259,7 @@ def assert_streaming_executor_conformant(
 
     try:
         executor.cancel(sample_handoff.handoff_id or "test-cancel", "conformance-test")
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         raise AssertionError(
             f"executor.cancel raised on a no-op invocation: {exc!r}"
         ) from exc
@@ -238,7 +292,7 @@ def assert_sync_executor_conformant(
     if sample_handoff is not None:
         try:
             executor.validate_handoff(sample_handoff)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             raise AssertionError(
                 f"executor.validate_handoff rejected a well-formed sample "
                 f"handoff: {exc!r}"
