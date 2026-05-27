@@ -16,19 +16,19 @@ Introduce an immutable Agent Interface Protocol library. Protocol DTOs live in `
 
 The protocol has three first-class surfaces:
 
-- `AgentHandoff`: executable target lane/action args plus separate `SemanticContext` and `ExecutionPolicy`.
-- `AgentStepResult`: status, user response/question/error, `SemanticResult`, and `ToolEvent` audit trail.
+- `AgentHandoff`: executable target lane/action args plus semantic and policy fields at the top level (originally split into separate `SemanticContext` and `ExecutionPolicy` sub-objects; flattened into the parent DTO in v4 — see addendum).
+- `AgentStepResult`: status, user response/question/error, semantic-result fields at the top level (originally a nested `SemanticResult`; flattened in v4), and `ToolEvent` audit trail.
 - `AgentExecutor`: minimal interface for future agent runtimes.
 
 Dispatcher schemas, scheduler queues, thread stores, and UI adapters are implementation details for consuming applications. They should adapt to AIP instead of being part of AIP.
 
 ## Invariants
 
-- Semantic data stays in `SemanticContext` or `SemanticResult`.
+- Semantic data stays in `AgentHandoff`'s semantic fields (handoff side) or `AgentStepResult`'s semantic fields (result side); see the v4 addendum for the flattened field list.
 - Tool calls stay in `AgentHandoff.args` or `ToolEvent`.
 - Protocol dataclasses are immutable and serialize to plain JSON-ready payloads.
 - Public agent step boundaries return `AgentStepResult`.
-- Agent-specific facts live in `SemanticResult.extra`, not telemetry.
+- Agent-specific facts live in `AgentStepResult.result_extra`, not telemetry.
 - Telemetry is for traces, token accounting, and debug-only execution details.
 
 ## Consequences
@@ -44,7 +44,7 @@ For standalone use:
 
 ## Follow-Ups
 
-- Promote commonly reused `SemanticResult.extra` keys to first-class protocol fields only after more than one application or agent runtime needs them.
+- Promote commonly reused `AgentStepResult.result_extra` keys to first-class protocol fields only after more than one application or agent runtime needs them.
 - Add conformance tests for third-party agent executors before external publication.
 - Keep dispatcher registries outside AIP unless multiple independent implementations require a shared registry contract.
 - Prefer rendering directly from `AgentStepResult.tool_events` for audit/debug surfaces.
@@ -254,3 +254,125 @@ version bump, not a silent extension.
   and `HarnessPolicy` describe topology and contract; they do not
   implement scheduling, admission, or evaluation logic. Runtimes
   own those.
+
+---
+
+# ADR Addendum: Wire-Format Flattening (v4)
+
+Status: Accepted
+
+Date: 2026-05-27
+
+## Context
+
+The v1–v3 wire format nested semantic data inside DTOs:
+`AgentHandoff.semantic_context.user_goal`,
+`AgentStepResult.semantic_result.action_summary`,
+`AgentStepResult.updated_handoff.semantic_context.extra`. That shape
+is fine for code consumers, but LLMs — particularly flash/lite tier
+models — drop braces, miss commas, and mis-nest at depth 4+. The
+deepest LLM-emitted path (`AgentStepResult` carrying an
+`updated_handoff` with populated `semantic_context.extra`) reached
+depth 4; the envelope-wrapped form reached depth 6. Even the routine
+`AgentStepResult` path was at depth 3, on the edge of where small
+models start to fail.
+
+Consumers were beginning to work around this by feeding LLMs
+stringified JSON or hand-rolled flat shadows of the AIP schema —
+exactly the drift the protocol exists to prevent.
+
+## Decision
+
+Flatten the wire format by dissolving the nested semantic and policy
+sub-objects into their parent DTOs.
+
+1. **Remove** `SemanticContext`, `SemanticResult`, and
+   `ExecutionPolicy` as separate DTOs.
+2. **Hoist** their fields onto `AgentHandoff` (semantic and policy)
+   and `AgentStepResult` (semantic result). Field renames where
+   needed to avoid collisions across hoisted scopes:
+   `SemanticContext.extra` → `AgentHandoff.context_extra`,
+   `ExecutionPolicy.extra` → `AgentHandoff.policy_extra`,
+   `SemanticResult.extra` → `AgentStepResult.result_extra`.
+3. **Detach** `AgentStepResult.updated_handoff` (embedded DTO) →
+   `AgentStepResult.next_handoff_id` (string reference).
+   Re-delegation is expressed by emitting a separate `AgentHandoff`
+   message rather than nesting one inside a step result.
+
+Net effect on LLM-emitted JSON depth:
+
+| DTO | v3 worst case | v4 worst case |
+|---|---|---|
+| `AgentHandoff` | 3 | 2 |
+| `AgentStepResult` | 4 | 3 |
+| `AgentStepEvent` | 5 | 4 |
+| `AgentMessage` | 6 | 5 |
+
+`PROTOCOL_VERSION` is bumped to `4`. `MIN_SUPPORTED_PROTOCOL_VERSION`
+is also bumped to `4` — this is a hard break, not a deprecation
+window. v3-shape payloads are rejected at the parse boundary because
+nested keys like `semantic_context` are no longer in the allowed
+top-level field set. AIP is pre-PyPI; no external consumers exist
+yet, so a clean break is preferable to dragging legacy parsing
+through future versions.
+
+## Alternatives Considered
+
+- **Keep v3 nested form, add a parallel "flat" projection for
+  LLMs.** Rejected — two shapes describing the same thing drift
+  apart, double the test/doc surface, and create a permanent "which
+  one do I use?" FAQ. Protocol versioning is the standard answer to
+  shape evolution, not parallel formats.
+- **Soften the break by accepting both v3 and v4 in `from_payload`
+  for a transition window.** Rejected for this specific cut because
+  AIP is pre-PyPI with no external consumers. The
+  `MIN_SUPPORTED_PROTOCOL_VERSION` machinery stays in place for
+  future version transitions where a rollout window matters.
+- **String-encode the nested objects (`"semantic_context": "<JSON
+  string>"`) to satisfy OpenAI strict structured outputs without
+  changing wire format.** Rejected — LLMs are notably worse at
+  emitting valid JSON-in-a-string than nested JSON, and it kills
+  schema validation of the encoded content.
+- **Make every property required and nullable to support OpenAI
+  strict mode end-to-end.** Rejected — bloats wire payloads ~3×,
+  degrades TypeScript/Go type generation for non-LLM consumers, and
+  optimizes the protocol for one vendor's product policy.
+- **Eliminate the `payload`/`body` envelope wrappers entirely
+  (per-kind top-level schemas).** Deferred — would cut envelope
+  depth further (`AgentMessage` from 5 to 3) but isn't needed for
+  the LLM-emission use case, since LLMs emit payloads (`AgentHandoff`
+  / `AgentStepResult`), not envelopes. The harness wraps the
+  envelope around the model's output. Reconsider if a future
+  consumer needs LLMs to emit `AgentMessage` directly.
+
+## Invariants (added)
+
+- Wire-format depth at LLM-facing DTOs is capped at 2 for
+  `AgentHandoff` and 3 for `AgentStepResult`. The cap is a design
+  constraint; new fields that would push depth above the cap require
+  an ADR addendum justifying the trade.
+- Re-delegation is by reference, not by embedding. An
+  `AgentStepResult` that wants to chain to a new handoff sets
+  `next_handoff_id` and the runtime emits a fresh `AgentHandoff`
+  message; it does not inline the next handoff inside the result.
+- v4 is the first hard break in AIP. The `MIN_SUPPORTED_PROTOCOL_VERSION`
+  range mechanism is preserved for future transitions, but each
+  version bump is now expected to decide explicitly whether it
+  warrants a rolling-deploy window or a hard cut.
+
+## Consequences
+
+- LLM-emitted payloads stay under depth 3 in the normal case, which
+  flash/lite tier models produce reliably.
+- v1–v3 producers cannot interoperate with v4 consumers without an
+  application-level translation layer. None exists in this package.
+- Re-delegation flows have one more message (separate `AgentHandoff`
+  emission) instead of embedding the next handoff inside the step
+  result. Runtimes that previously read `result.updated_handoff`
+  must instead watch for the follow-up handoff keyed by
+  `next_handoff_id`.
+- `SemanticContext`, `SemanticResult`, and `ExecutionPolicy` no
+  longer exist as importable types. Code that constructed them
+  directly must construct the parent DTO with hoisted fields.
+- AIP still owns no transport, scheduler, or orchestration engine.
+  The flatten is a wire-format change, not a scope change.

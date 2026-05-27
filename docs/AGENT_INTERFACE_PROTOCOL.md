@@ -9,11 +9,11 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
 1. Handoffs separate executable input from semantic context.
 
    `AgentHandoff.args` is the target agent's tool/action input.
-   `AgentHandoff.semantic_context` carries summaries, assumptions, decisions, constraints, and expected outcome. Do not put semantic summaries inside tool args.
+   `AgentHandoff`'s semantic fields — `user_goal`, `source_summary`, `assumptions`, `decisions`, `constraints`, `expected_outcome`, `observations` — carry the durable meaning of the handoff. Do not put semantic summaries inside tool args. (v4 hoisted these from the v3 nested `semantic_context` to keep wire-format depth shallow for LLM consumers.)
 
 2. Results separate meaning from tool history.
 
-   `AgentStepResult.semantic_result` is the durable action summary, state-change summary, unresolved questions, followups, and observations. `AgentStepResult.tool_events` is an audit/debug stream of tools called while producing the result. Consumers should not parse tool events to recover semantic meaning.
+   `AgentStepResult`'s semantic fields — `action_summary`, `state_changes`, `unresolved_questions`, `followups`, `observations` — are the durable result meaning. `AgentStepResult.tool_events` is an audit/debug stream of tools called while producing the result. Consumers should not parse tool events to recover semantic meaning. (v4 hoisted these from the v3 nested `semantic_result`.)
 
 3. Protocol objects are immutable.
 
@@ -23,7 +23,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
 
    Agent internals can use private helper shapes, but public step boundaries should expose protocol results. Dict-style `result["answer"]` and `result.get(...)` are intentionally unsupported at that boundary.
 
-   Agent-specific details that are meaningful to callers belong in `AgentStepResult.semantic_result.extra`; telemetry is reserved for execution traces and token/debug accounting.
+   Agent-specific details that are meaningful to callers belong in `AgentStepResult.result_extra`; telemetry is reserved for execution traces and token/debug accounting.
 
 5. Dispatcher schemas are implementation-owned.
 
@@ -163,10 +163,13 @@ Event kinds (`AgentStepEvent.kind`):
 | `checkpoint` | `{checkpoint_id, state}` | resume/replay marker; `state` is opaque to AIP |
 | `evaluation` | `{passed, score, findings, details}` | result of self- or peer-evaluation |
 
-**Layer 3 — Content: the existing semantic DTOs.**
-`SemanticContext`, `SemanticResult`, `ExecutionPolicy`, `ToolEvent`,
-`AgentHandoff`, and `AgentStepResult` are unchanged from v1. They
-remain the durable, transport-agnostic meaning of a step.
+**Layer 3 — Content: the semantic DTOs.**
+`AgentHandoff`, `AgentStepResult`, `ToolEvent`, and `ErrorInfo` are
+the durable, transport-agnostic meaning of a step. As of v4,
+semantic-context, semantic-result, and execution-policy fields live
+directly on `AgentHandoff` and `AgentStepResult` rather than in
+nested sub-objects — the wire shape is intentionally flat so
+LLM-emitted JSON stays at depth 2–3.
 
 ### Example timeline
 
@@ -287,7 +290,7 @@ exposed for cases where downstream wants more granular assertions.
 
 ## Extension Points
 
-- Add new semantic fields through `SemanticContext.extra`, `SemanticResult.extra`, or `ExecutionPolicy.extra` first. Promote them to first-class fields only when more than one consumer needs a stable named field.
-- Add product-specific routing metadata through `AgentHandoff.args`, `AgentHandoff.action`, or `ExecutionPolicy.extra`; keep the dispatcher registry in the consuming application.
-- Add a new inter-agent tool event by emitting `ToolEvent`; keep user meaning in `SemanticResult`.
+- Add new semantic fields through `AgentHandoff.context_extra`, `AgentStepResult.result_extra`, or `AgentHandoff.policy_extra` first. Promote them to first-class fields only when more than one consumer needs a stable named field.
+- Add product-specific routing metadata through `AgentHandoff.args`, `AgentHandoff.action`, or `AgentHandoff.policy_extra`; keep the dispatcher registry in the consuming application.
+- Add a new inter-agent tool event by emitting `ToolEvent`; keep user meaning in `AgentStepResult`'s semantic fields, not in tool event prose.
 - Carry transport-level metadata (auth tokens, hop counts, queue topics) outside AIP entirely; the envelope deliberately exposes only addressing/correlation/timing, not transport plumbing.
