@@ -59,7 +59,7 @@ python -m pip install -e .
 When published as a package, pin it like any other protocol dependency:
 
 ```bash
-python -m pip install "agent-interface-protocol==0.2.*"
+python -m pip install "agent-interface-protocol==0.3.*"
 ```
 
 ## Quick Example
@@ -125,7 +125,7 @@ Three layers:
 2. **Lifecycle** — `AgentStepEvent` describes one event in a single step's timeline. Multiple events make up a step; the terminal `final` event carries an `AgentStepResult`. `seq` is producer-assigned and monotonically increasing per `(handoff_id, step_id)`.
 3. **Content** — the v1 DTOs (`AgentHandoff`, `AgentStepResult`, etc.) ride inside envelopes and event bodies unchanged.
 
-A typical streamed step looks like:
+A typical streamed step looks like this on the wire:
 
 ```
 AgentMessage(kind=handoff, message_id=m1, correlation_id=h1, payload=<AgentHandoff>)
@@ -135,6 +135,69 @@ AgentMessage(kind=step_event, correlation_id=h1, payload=<AgentStepEvent kind=to
 AgentMessage(kind=step_event, correlation_id=h1, payload=<AgentStepEvent kind=partial_response seq=2>)
 AgentMessage(kind=step_result, correlation_id=h1, in_reply_to=m1, payload=<AgentStepResult>)
 ```
+
+In Python, the same exchange — dispatch, acceptance, one tool event,
+and a terminal result — composes from the existing DTOs:
+
+```python
+from agent_interface_protocol import (
+    AgentMessage,
+    AgentStepEvent,
+    AgentStepResult,
+    SemanticResult,
+    ToolEvent,
+)
+
+dispatch = AgentMessage(
+    kind="handoff",
+    message_id="m1",
+    correlation_id="h1",
+    sender="host@svc",
+    recipient="billing@svc",
+    payload=handoff.to_payload(),
+)
+
+accepted = AgentMessage(
+    kind="step_event",
+    correlation_id="h1",
+    payload=AgentStepEvent(
+        kind="accepted", handoff_id="h1", step_id="s1", seq=0,
+    ).to_payload(),
+)
+
+tool_event = AgentMessage(
+    kind="step_event",
+    correlation_id="h1",
+    payload=AgentStepEvent(
+        kind="tool_event",
+        handoff_id="h1", step_id="s1", seq=1,
+        body=ToolEvent(
+            name="create_invoice",
+            args={"customer_id": "cust_123", "amount": 1250},
+            result='{"invoice_id": "inv_456"}',
+        ).to_payload(),
+    ).to_payload(),
+)
+
+terminal = AgentMessage(
+    kind="step_result",
+    correlation_id="h1",
+    in_reply_to="m1",
+    payload=AgentStepResult(
+        status="completed",
+        user_visible_response="Draft invoice inv_456 is ready.",
+        semantic_result=SemanticResult(
+            action_summary="Created draft invoice inv_456.",
+            state_changes=("invoice:inv_456:draft",),
+        ),
+    ).to_payload(),
+)
+```
+
+`AgentMessage` owns transport identity (`sender`/`recipient`/
+`message_id`/`correlation_id`/`in_reply_to`). The semantic
+`source_agent`/`target_agent` stay inside the handoff — a router can
+sit between the sender and the semantic target without losing meaning.
 
 Synchronous executors are still supported. `AgentExecutor.step` returns
 the terminal `AgentStepResult` directly — equivalent to draining
@@ -211,7 +274,7 @@ Run tests from the repository root:
 python -m pytest
 ```
 
-The conformance tests cover immutability, serialization, protocol-version rejection and preservation, status validation, semantic/tool separation, non-mapping result behavior, and unknown-field and wrong-type rejection at parse boundaries.
+The conformance tests cover immutability, serialization, protocol-version rejection and preservation, status validation, semantic/tool separation, non-mapping result behavior, and unknown-field and wrong-type rejection at parse boundaries. The v2 communication layer adds round-trip coverage per envelope/event `kind`, cross-kind payload rejection, `seq` ordering invariants, and v1 backwards-compatibility checks.
 
 ## Versioning
 
