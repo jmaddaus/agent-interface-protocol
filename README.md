@@ -467,7 +467,7 @@ from agent_interface_protocol.reference import (
 
 **`SyncStreamAdapter`** exposes a `StreamingAgentExecutor` through the
 sync `AgentExecutor.step` contract. It drains `stream(handoff)`,
-enforces invariants 9 and 10 (strictly-increasing `seq`, exactly one
+enforces invariants 8 and 9 (strictly-increasing `seq`, exactly one
 terminal `final` event, no post-`final` events), and returns the
 `AgentStepResult` from the `final` event:
 
