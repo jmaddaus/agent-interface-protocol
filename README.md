@@ -345,6 +345,53 @@ AIP does not own:
 
 A consuming application should adapt those implementation details into `AgentHandoff` and `AgentStepResult`.
 
+## JSON Schema Export
+
+Every public DTO has a JSON Schema (Draft 2020-12) describing the same
+shape its `from_payload` accepts. Use them to validate AIP payloads
+from non-Python consumers (JavaScript, Go, Rust, schema-driven UI
+tools) or to generate types in other languages.
+
+Two ways to consume them:
+
+```python
+# At runtime — always in sync with the installed AIP version.
+from agent_interface_protocol.schema import (
+    agent_message_schema,
+    json_schemas,
+)
+
+schema = agent_message_schema()  # one DTO
+all_schemas = json_schemas()     # {"AgentMessage": {...}, "AgentHandoff": {...}, ...}
+```
+
+```bash
+# Static files committed under schemas/ — for non-Python consumers
+# reading the repo on GitHub.
+ls schemas/
+# AgentHandoff.json   AgentMessage.json     AgentStepEvent.json
+# AgentStepResult.json  ErrorInfo.json      ExecutionPolicy.json
+# HarnessPolicy.json    OrchestrationContext.json
+# SemanticContext.json  SemanticResult.json  ToolEvent.json
+```
+
+Each schema is self-contained with its own `$defs` for nested types.
+Discriminated unions (`AgentMessage.kind`, `AgentStepEvent.kind`) use
+`oneOf` with `const` on the kind and the corresponding payload/body
+shape per branch — cross-kind payloads fail validation the same way
+they do in Python's `from_payload`.
+
+The schemas reflect *this* build of AIP — the protocol version range
+and the event/message kind sets are pinned to what this version
+accepts. Regenerate the static files after editing the schema module:
+
+```bash
+python scripts/generate_schemas.py
+```
+
+A test asserts the committed JSON files match the code output, so
+forgotten regeneration surfaces on the next `pytest` run.
+
 ## Reference Implementations
 
 The package ships a small `agent_interface_protocol.reference` module
