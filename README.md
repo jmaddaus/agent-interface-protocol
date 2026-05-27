@@ -70,7 +70,7 @@ python -m pip install -e .
 When published as a package, pin it like any other protocol dependency:
 
 ```bash
-python -m pip install "agent-interface-protocol==0.5.*"
+python -m pip install "agent-interface-protocol==0.6.*"
 ```
 
 ## Quick Example
@@ -414,6 +414,40 @@ python -m agent_interface_protocol.schema AgentMessage # dump one schema
 python -m agent_interface_protocol.schema --all        # dump all schemas as one object
 python -m agent_interface_protocol.schema ErrorInfo --indent 0  # single-line JSON
 ```
+
+## Conformance Suite
+
+Third-party packages that implement `StreamingAgentExecutor` or
+`AgentExecutor` can claim protocol conformance by running the
+assertions in `agent_interface_protocol.conformance` from their own
+test suite. The assertions encode the protocol invariants — strictly
+increasing `seq`, exactly one terminal `final` event, no post-`final`
+emissions, structural contract on `describe`/`validate_handoff`/
+`cancel` — so downstream implementations and AIP itself stay aligned
+as new versions add new kinds.
+
+```python
+from agent_interface_protocol import AgentHandoff
+from agent_interface_protocol.conformance import (
+    assert_streaming_executor_conformant,
+)
+from my_pkg import MyStreamingExecutor
+
+
+def test_my_executor_is_conformant():
+    executor = MyStreamingExecutor(some_config)
+    sample = AgentHandoff(lane="messaging", action="send")
+    assert_streaming_executor_conformant(executor, sample)
+```
+
+Composite helpers (`assert_event_stream_conformant`,
+`assert_streaming_executor_conformant`,
+`assert_sync_executor_conformant`) chain every invariant and raise
+`AssertionError` on the first violation. Per-invariant helpers
+(`assert_seq_strictly_increasing`, `assert_exactly_one_final`,
+`assert_no_events_after_final`, `assert_kinds_are_known`,
+`assert_final_body_is_step_result`) are exposed for cases where
+downstream wants more granular assertions.
 
 ## Reference Implementations
 
