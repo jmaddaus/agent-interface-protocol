@@ -17,13 +17,10 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 
 ## Core Concepts
 
-**Content DTOs** (the semantic layer — unchanged since v1):
+**Content DTOs** (the semantic layer):
 
-- `AgentHandoff`: executable target lane/action input plus semantic context and execution policy.
-- `SemanticContext`: user goal, source summary, assumptions, decisions, constraints, observations, and extension data.
-- `ExecutionPolicy`: scheduler/runtime hints such as write scope, dependencies, priority, confirmation requirements, and extension data.
-- `AgentStepResult`: the result of one agent step, including status, user response/question/error, semantic result, tool events, updated handoff, and telemetry.
-- `SemanticResult`: durable meaning produced by an agent step: action summary, state changes, unresolved questions, followups, observations, and extension data.
+- `AgentHandoff`: executable target lane/action input. Carries semantic fields (`user_goal`, `source_summary`, `assumptions`, `decisions`, `constraints`, `expected_outcome`, `observations`, `context_extra`) and execution-policy fields (`write_scope`, `dependency_keys`, `priority`, `requires_confirmation`, `max_steps`, `policy_extra`) directly on the DTO — v4 dissolved the v3 `semantic_context` / `execution_policy` sub-objects to flatten the wire format for LLM consumers.
+- `AgentStepResult`: the result of one agent step. Carries `status`, user response/question/error, semantic-result fields (`action_summary`, `state_changes`, `unresolved_questions`, `followups`, `observations`, `result_extra`) directly on the DTO, plus `tool_events`, `next_handoff_id` (re-delegation by reference), and `telemetry`.
 - `ToolEvent`: typed audit/debug record for one tool call.
 - `AgentExecutor`: minimal structural interface for synchronous target-agent implementations.
 
@@ -42,8 +39,8 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 ## Invariants
 
 1. Keep executable input in `AgentHandoff.args`.
-2. Keep handoff meaning in `AgentHandoff.semantic_context`.
-3. Keep durable result meaning in `AgentStepResult.semantic_result`.
+2. Keep handoff meaning in `AgentHandoff`'s semantic fields (`user_goal`, `assumptions`, `decisions`, `constraints`, `expected_outcome`, `observations`).
+3. Keep durable result meaning in `AgentStepResult`'s semantic fields (`action_summary`, `state_changes`, `unresolved_questions`, `followups`, `observations`).
 4. Keep tool history in `AgentStepResult.tool_events`.
 5. Do not parse tool event prose to recover semantic meaning.
 6. Treat protocol objects as immutable; construct a new object for changes.
@@ -58,6 +55,7 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 15. `checkpoint` event `state` is opaque to AIP — preserved for resume/replay but not interpreted.
 16. When `orchestration`, `harness_policy`, or `phase` appears on both an envelope and its inner event, producers MUST keep the values consistent across layers; the inner (event-level) value is authoritative for the event's content; consumers MAY treat divergence as an inconsistency error.
 17. `AgentStepEvent` does not carry an `agent_interface_version`. Events are envelope-bound: producers that persist bare events outside an `AgentMessage` MUST persist the originating envelope's version separately, or wrap each persisted event in an envelope.
+18. `AgentStepResult.next_handoff_id` is a reference, not an embedded DTO. AIP validates only that the field is a string at the parse boundary; runtimes MUST add referential-integrity checks at their correlation layer (timeout on unresolved references, reject ids that don't match an in-flight or recorded handoff). Silent-until-runtime failure is the trade for the flatter wire shape that replaced v3's embedded `updated_handoff`.
 
 ## Installation
 
@@ -80,9 +78,6 @@ python -m pip install "agent-interface-protocol==0.6.*"
 from agent_interface_protocol.agent_interface import (
     AgentHandoff,
     AgentStepResult,
-    ExecutionPolicy,
-    SemanticContext,
-    SemanticResult,
     ToolEvent,
 )
 
@@ -92,15 +87,11 @@ handoff = AgentHandoff(
     lane="billing",
     action="create_invoice",
     args={"customer_id": "cust_123", "amount": 1250},
-    semantic_context=SemanticContext(
-        user_goal="Create an invoice for the approved work.",
-        source_summary="The customer approved the estimate for 1250.",
-        expected_outcome="Draft an invoice and return the invoice id.",
-    ),
-    execution_policy=ExecutionPolicy(
-        write_scope=("billing:invoices",),
-        requires_confirmation=False,
-    ),
+    user_goal="Create an invoice for the approved work.",
+    source_summary="The customer approved the estimate for 1250.",
+    expected_outcome="Draft an invoice and return the invoice id.",
+    write_scope=("billing:invoices",),
+    requires_confirmation=False,
 )
 
 payload = handoff.to_payload()
@@ -109,10 +100,8 @@ rebuilt = AgentHandoff.from_payload(payload)
 result = AgentStepResult(
     status="completed",
     user_visible_response="Draft invoice inv_456 is ready.",
-    semantic_result=SemanticResult(
-        action_summary="Created draft invoice inv_456.",
-        state_changes=("invoice:inv_456:draft",),
-    ),
+    action_summary="Created draft invoice inv_456.",
+    state_changes=("invoice:inv_456:draft",),
     tool_events=(
         ToolEvent(
             name="create_invoice",
@@ -135,7 +124,7 @@ Three layers:
 
 1. **Envelope** — `AgentMessage` owns addressing, correlation, and timing. One envelope carries one payload across a transport (queue, websocket, gRPC stream, in-process bus).
 2. **Lifecycle** — `AgentStepEvent` describes one event in a single step's timeline. Multiple events make up a step; the terminal `final` event carries an `AgentStepResult`. `seq` is producer-assigned and monotonically increasing per `(handoff_id, step_id)`.
-3. **Content** — the v1 DTOs (`AgentHandoff`, `AgentStepResult`, etc.) ride inside envelopes and event bodies unchanged.
+3. **Content** — the content DTOs (`AgentHandoff`, `AgentStepResult`, etc.) ride inside envelopes and event bodies.
 
 A typical streamed step looks like this on the wire:
 
@@ -156,7 +145,6 @@ from agent_interface_protocol import (
     AgentMessage,
     AgentStepEvent,
     AgentStepResult,
-    SemanticResult,
     ToolEvent,
 )
 
@@ -198,10 +186,8 @@ terminal = AgentMessage(
     payload=AgentStepResult(
         status="completed",
         user_visible_response="Draft invoice inv_456 is ready.",
-        semantic_result=SemanticResult(
-            action_summary="Created draft invoice inv_456.",
-            state_changes=("invoice:inv_456:draft",),
-        ),
+        action_summary="Created draft invoice inv_456.",
+        state_changes=("invoice:inv_456:draft",),
     ).to_payload(),
 )
 ```
@@ -220,8 +206,34 @@ Cross-kind payloads are rejected at the parse boundary: e.g. an
 because `AgentHandoff.from_payload` does not recognize `code` as a
 top-level field.
 
-v1 and v2 payloads parse unchanged under v3. `SUPPORTED_PROTOCOL_VERSIONS`
-covers `1..3` for the duration of the v3 release.
+v4 is a hard break from v1–v3: the wire format was flattened to reduce
+nesting depth for LLM-emitted JSON, so v3-shape payloads (with nested
+`semantic_context`, `semantic_result`, `execution_policy`, or
+`updated_handoff`) are rejected at the parse boundary.
+`SUPPORTED_PROTOCOL_VERSIONS` covers `4..4` for this release.
+
+**Re-delegation migration (runtimes that read `updated_handoff`).**
+v3's `AgentStepResult.updated_handoff` was an embedded `AgentHandoff`
+DTO — structurally validated at the parse boundary alongside the
+result. v4 replaces it with `AgentStepResult.next_handoff_id`, a
+**string reference** to a separately-emitted `AgentHandoff` message.
+Two consequences runtimes need to handle:
+
+1. The next handoff arrives in a *different* `AgentMessage` (kind
+   `handoff`), not inside the step result. Subscribers that expected
+   to read `result.updated_handoff` synchronously must now correlate
+   the follow-up handoff by id.
+2. A dangling or typo'd `next_handoff_id` is **not caught at the
+   parse boundary** — `from_payload` only validates that the field
+   is a string. Stale or unresolvable references surface at runtime
+   when the consumer tries to look the handoff up. Runtimes should
+   validate referential integrity at their own correlation layer
+   (e.g. timeout if the referenced handoff never arrives, reject
+   ids that don't match an in-flight or recorded handoff).
+
+This is a deliberate trade: the embedded DTO inflated wire-format
+depth past where flash/lite LLMs reliably emit valid JSON. See the
+v4 ADR addendum for the alternatives considered.
 
 ## Orchestration and Harness Layer
 
@@ -321,11 +333,11 @@ Unknown statuses raise `ValueError`.
 
 ## Extension Data
 
-Use `.extra` fields before adding protocol-level fields:
+Use the `*_extra` fields before adding protocol-level fields:
 
-- `SemanticContext.extra` for handoff-side semantic metadata.
-- `SemanticResult.extra` for result-side semantic metadata.
-- `ExecutionPolicy.extra` for scheduler/runtime policy metadata.
+- `AgentHandoff.context_extra` for handoff-side semantic metadata.
+- `AgentHandoff.policy_extra` for scheduler/runtime policy metadata.
+- `AgentStepResult.result_extra` for result-side semantic metadata.
 
 Promote an extension key to a first-class field only when multiple independent consumers need a stable named field.
 
@@ -370,18 +382,30 @@ all_schemas = json_schemas()     # {"AgentMessage": {...}, "AgentHandoff": {...}
 # Static files committed under agent_interface_protocol/schemas/ —
 # also shipped inside the wheel for downstream tooling.
 ls agent_interface_protocol/schemas/
-# AgentHandoff.json   AgentMessage.json     AgentStepEvent.json
-# AgentStepResult.json  ErrorInfo.json      ExecutionPolicy.json
-# HarnessPolicy.json    OrchestrationContext.json
-# SemanticContext.json  SemanticResult.json  ToolEvent.json
+# AgentHandoff.json     AgentMessage.json     AgentStepEvent.json
+# AgentStepResult.json  ErrorInfo.json        HarnessPolicy.json
+# OrchestrationContext.json                   ToolEvent.json
 ```
 
-Each schema is self-contained with its own `$defs` for nested types,
-pruned to only those reachable from `$ref` in the schema body.
-Discriminated unions (`AgentMessage.kind`, `AgentStepEvent.kind`) use
-`oneOf` with `const` on the kind and the corresponding payload/body
-shape per branch — cross-kind payloads fail validation the same way
-they do in Python's `from_payload`.
+Each schema is **flat and self-contained**: every nested type is
+inlined directly, with no `$defs` and no `$ref`. Discriminated unions
+(`AgentMessage.kind`, `AgentStepEvent.kind`) use `anyOf` with `const`
+on the kind and the corresponding payload/body shape per branch —
+cross-kind payloads fail validation the same way they do in Python's
+`from_payload`. The shape ports cleanly across validators (ajv,
+jsonschema, gojsonschema), Anthropic tool_use, and Gemini structured
+output without `$ref` resolution.
+
+**OpenAI strict structured outputs caveat.** AIP's open extension
+fields (`args`, `context_extra`, `policy_extra`, `result_extra`,
+`telemetry`, `payload`, `body`, `details`, `budget`, `metrics`,
+`state`, `schema`) remain `{"type": "object"}` because the
+protocol's extensibility hinges on them being free-form.
+OpenAI's strict `response_format` mode requires every object to
+declare `properties` and forbids open objects, so these schemas are
+not drop-in for OpenAI strict mode. Use Anthropic tool_use, Gemini,
+non-strict OpenAI function calling, or string-encode extension data
+at the caller when targeting OpenAI strict.
 
 **Necessary, not sufficient.** The schemas are a structural gate
 matching `from_payload` at the trust boundary (type checking, enum

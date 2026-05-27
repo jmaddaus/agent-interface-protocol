@@ -1,15 +1,33 @@
-"""JSON Schema export for AIP DTOs.
+"""JSON Schema export for AIP DTOs (flat, cross-vendor compatible).
 
-Each public DTO has a JSON Schema (Draft 2020-12) describing the same
-shape its ``from_payload`` accepts. Use these schemas to validate AIP
-payloads from non-Python consumers, or to generate types in other
-languages.
+Each public DTO has a self-contained JSON Schema (Draft 2020-12)
+describing the same shape its ``from_payload`` accepts. The schemas
+are intentionally *flat*: every nested type is inlined, there is no
+``$defs`` and no ``$ref``, and discriminated unions use ``anyOf``
+rather than ``oneOf``. That shape ports cleanly across validators
+(ajv, jsonschema, gojsonschema), structured-output systems (Anthropic
+tool_use, Gemini), and most schema-driven UI tools.
 
-The schemas reflect *this* build of AIP — the protocol version range
-and event/kind sets are pinned to what this version accepts. When AIP
-widens its supported version range or adds new kinds, the schemas
-change; regenerate the static files under ``schemas/`` with
-``python scripts/generate_schemas.py``.
+v4 wire-format flatness
+-----------------------
+The v3 ``SemanticContext``, ``SemanticResult``, and ``ExecutionPolicy``
+sub-objects were dissolved into ``AgentHandoff`` and
+``AgentStepResult`` at the wire level. ``updated_handoff`` was
+replaced by a ``next_handoff_id`` reference. The result: the deepest
+LLM-emitted shape (``AgentStepResult``) is depth 2, ``AgentHandoff``
+is depth 2, and small/flash models can produce them reliably.
+
+OpenAI strict structured outputs caveat
+---------------------------------------
+The protocol's open extension fields — ``args``, ``context_extra``,
+``policy_extra``, ``result_extra``, ``telemetry``, ``payload``,
+``body``, ``details``, ``budget``, ``metrics``, ``state``, ``schema``
+— remain ``{"type": "object"}`` because AIP's design hinges on them
+being free-form. OpenAI's strict mode requires every object to
+declare ``properties`` and forbids open objects, so these schemas
+are not drop-in for OpenAI strict response_format. Use Anthropic
+tool_use, Gemini, or string-encoded extension data when targeting
+OpenAI strict.
 
 Necessary-but-not-sufficient
 ----------------------------
@@ -55,7 +73,7 @@ SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 
 # ---------------------------------------------------------------------------
-# Small builders
+# Leaf builders
 # ---------------------------------------------------------------------------
 
 
@@ -64,6 +82,7 @@ def _string_array() -> dict[str, Any]:
 
 
 def _open_object() -> dict[str, Any]:
+    """An intentional extension point — see module docstring."""
     return {"type": "object"}
 
 
@@ -81,59 +100,21 @@ def _protocol_version_field() -> dict[str, Any]:
     }
 
 
+def _nullable(*, type_: str, minimum: int | None = None) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": [type_, "null"]}
+    if minimum is not None:
+        schema["minimum"] = minimum
+    return schema
+
+
 # ---------------------------------------------------------------------------
-# Nested DTO definitions (used as $defs in every top-level schema)
+# Inline DTO definitions (no $defs, no $ref — every nested type appears in
+# full wherever it's used). The trade-off is larger files for fully
+# portable schemas.
 # ---------------------------------------------------------------------------
 
 
-def _semantic_context_def() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "user_goal": {"type": "string"},
-            "source_summary": {"type": "string"},
-            "assumptions": _string_array(),
-            "decisions": _string_array(),
-            "constraints": _string_array(),
-            "expected_outcome": {"type": "string"},
-            "observations": _string_array(),
-            "extra": _open_object(),
-        },
-    }
-
-
-def _semantic_result_def() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "action_summary": {"type": "string"},
-            "state_changes": _string_array(),
-            "unresolved_questions": _string_array(),
-            "followups": _string_array(),
-            "observations": _string_array(),
-            "extra": _open_object(),
-        },
-    }
-
-
-def _execution_policy_def() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "write_scope": _string_array(),
-            "dependency_keys": _string_array(),
-            "priority": {"type": "integer"},
-            "requires_confirmation": {"type": "boolean"},
-            "max_steps": {"type": "integer"},
-            "extra": _open_object(),
-        },
-    }
-
-
-def _tool_event_def() -> dict[str, Any]:
+def _tool_event() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -148,7 +129,7 @@ def _tool_event_def() -> dict[str, Any]:
     }
 
 
-def _error_info_def() -> dict[str, Any]:
+def _error_info() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -161,7 +142,7 @@ def _error_info_def() -> dict[str, Any]:
     }
 
 
-def _orchestration_context_def() -> dict[str, Any]:
+def _orchestration_context() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -179,7 +160,7 @@ def _orchestration_context_def() -> dict[str, Any]:
     }
 
 
-def _harness_policy_def() -> dict[str, Any]:
+def _harness_policy() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -187,8 +168,8 @@ def _harness_policy_def() -> dict[str, Any]:
             "contract_id": {"type": "string"},
             "allowed_tools": _string_array(),
             "required_outputs": _string_array(),
-            "max_tool_calls": {"type": ["integer", "null"], "minimum": 0},
-            "max_steps": {"type": ["integer", "null"], "minimum": 0},
+            "max_tool_calls": _nullable(type_="integer", minimum=0),
+            "max_steps": _nullable(type_="integer", minimum=0),
             "requires_self_evaluation": {"type": "boolean"},
             "budget": _open_object(),
             "extra": _open_object(),
@@ -196,7 +177,21 @@ def _harness_policy_def() -> dict[str, Any]:
     }
 
 
-def _agent_handoff_def() -> dict[str, Any]:
+def _nullable_object(inner: dict[str, Any]) -> dict[str, Any]:
+    """Either ``inner`` or null.
+
+    Expressed as a single object with ``type: [object, null]`` plus the
+    inner constraints, rather than ``anyOf: [inner, {type: null}]`` —
+    avoids a redundant ``anyOf`` level and stays portable across
+    validators.
+    """
+    schema = dict(inner)
+    schema["type"] = ["object", "null"]
+    return schema
+
+
+def _agent_handoff() -> dict[str, Any]:
+    """Flat v4 AgentHandoff — semantic and policy fields at top level."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -208,14 +203,29 @@ def _agent_handoff_def() -> dict[str, Any]:
             "lane": {"type": "string"},
             "action": {"type": "string"},
             "args": _open_object(),
-            "semantic_context": {"$ref": "#/$defs/SemanticContext"},
-            "execution_policy": {"$ref": "#/$defs/ExecutionPolicy"},
+            # --- semantic (hoisted from v3 SemanticContext) ---
+            "user_goal": {"type": "string"},
+            "source_summary": {"type": "string"},
+            "assumptions": _string_array(),
+            "decisions": _string_array(),
+            "constraints": _string_array(),
+            "expected_outcome": {"type": "string"},
+            "observations": _string_array(),
+            "context_extra": _open_object(),
+            # --- execution policy (hoisted from v3 ExecutionPolicy) ---
+            "write_scope": _string_array(),
+            "dependency_keys": _string_array(),
+            "priority": {"type": "integer"},
+            "requires_confirmation": {"type": "boolean"},
+            "max_steps": {"type": "integer"},
+            "policy_extra": _open_object(),
             "warnings": _string_array(),
         },
     }
 
 
-def _agent_step_result_def() -> dict[str, Any]:
+def _agent_step_result() -> dict[str, Any]:
+    """Flat v4 AgentStepResult — semantic-result fields at top level."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -227,55 +237,33 @@ def _agent_step_result_def() -> dict[str, Any]:
                 "enum": sorted(AGENT_STEP_STATUSES),
             },
             "user_visible_response": {"type": "string"},
-            "semantic_result": {"$ref": "#/$defs/SemanticResult"},
+            # --- semantic result (hoisted from v3 SemanticResult) ---
+            "action_summary": {"type": "string"},
+            "state_changes": _string_array(),
+            "unresolved_questions": _string_array(),
+            "followups": _string_array(),
+            "observations": _string_array(),
+            "result_extra": _open_object(),
+            # --- execution trace & control ---
             "tool_events": {
                 "type": "array",
-                "items": {"$ref": "#/$defs/ToolEvent"},
+                "items": _tool_event(),
             },
             "question": {"type": "string"},
             "error": {"type": "string"},
-            "updated_handoff": {
-                "oneOf": [
-                    {"$ref": "#/$defs/AgentHandoff"},
-                    {"type": "null"},
-                ],
-            },
+            "next_handoff_id": {"type": "string"},
             "telemetry": _open_object(),
         },
     }
 
 
-def _agent_step_event_def() -> dict[str, Any]:
-    """AgentStepEvent inside $defs (used by AgentMessage.payload[step_event])."""
-    return _build_agent_step_event_schema(include_defs=False)
-
-
-def _all_definitions() -> dict[str, dict[str, Any]]:
-    """Every nested type schema, keyed by name.
-
-    A fresh dict each call so callers can mutate freely.
-    """
-    return {
-        "SemanticContext": _semantic_context_def(),
-        "SemanticResult": _semantic_result_def(),
-        "ExecutionPolicy": _execution_policy_def(),
-        "ToolEvent": _tool_event_def(),
-        "ErrorInfo": _error_info_def(),
-        "OrchestrationContext": _orchestration_context_def(),
-        "HarnessPolicy": _harness_policy_def(),
-        "AgentHandoff": _agent_handoff_def(),
-        "AgentStepResult": _agent_step_result_def(),
-        "AgentStepEvent": _agent_step_event_def(),
-    }
-
-
 # ---------------------------------------------------------------------------
-# Per-kind body / payload shapes for discriminated unions
+# Discriminated unions — anyOf branches keyed by ``kind`` const.
+# Each branch fully inlines the body/payload shape it permits.
 # ---------------------------------------------------------------------------
 
 
 def _step_event_body_branches() -> list[dict[str, Any]]:
-    """One ``oneOf`` branch per AgentStepEvent.kind."""
     bodies: list[tuple[str, dict[str, Any]]] = [
         ("accepted", {"type": "object", "additionalProperties": False}),
         (
@@ -289,7 +277,7 @@ def _step_event_body_branches() -> list[dict[str, Any]]:
                 },
             },
         ),
-        ("tool_event", {"$ref": "#/$defs/ToolEvent"}),
+        ("tool_event", _tool_event()),
         (
             "partial_response",
             {
@@ -312,7 +300,7 @@ def _step_event_body_branches() -> list[dict[str, Any]]:
                 },
             },
         ),
-        ("final", {"$ref": "#/$defs/AgentStepResult"}),
+        ("final", _agent_step_result()),
         (
             "phase_started",
             {
@@ -373,11 +361,10 @@ def _step_event_body_branches() -> list[dict[str, Any]]:
 
 
 def _agent_message_payload_branches() -> list[dict[str, Any]]:
-    """One ``oneOf`` branch per AgentMessage.kind."""
     payloads: list[tuple[str, dict[str, Any]]] = [
-        ("handoff", {"$ref": "#/$defs/AgentHandoff"}),
-        ("step_event", {"$ref": "#/$defs/AgentStepEvent"}),
-        ("step_result", {"$ref": "#/$defs/AgentStepResult"}),
+        ("handoff", _agent_handoff()),
+        ("step_event", _agent_step_event_body()),
+        ("step_result", _agent_step_result()),
         (
             "cancel",
             {
@@ -402,7 +389,7 @@ def _agent_message_payload_branches() -> list[dict[str, Any]]:
                 },
             },
         ),
-        ("error", {"$ref": "#/$defs/ErrorInfo"}),
+        ("error", _error_info()),
     ]
     return [
         {
@@ -416,63 +403,14 @@ def _agent_message_payload_branches() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Reachability: include only the ``$defs`` that a given schema actually
-# references (transitively). Validators ignore unused ``$defs`` so this
-# is purely cosmetic, but committed JSON files are smaller and easier
-# to read on GitHub when each schema carries only what it needs.
-# ---------------------------------------------------------------------------
-
-_REF_PREFIX = "#/$defs/"
-
-
-def _collect_refs(node: Any, found: set[str]) -> None:
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if (
-                key == "$ref"
-                and isinstance(value, str)
-                and value.startswith(_REF_PREFIX)
-            ):
-                found.add(value[len(_REF_PREFIX):])
-            else:
-                _collect_refs(value, found)
-    elif isinstance(node, list):
-        for item in node:
-            _collect_refs(item, found)
-
-
-def _reachable_defs(body: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Transitive closure of ``$defs`` reachable from ``body`` via ``$ref``.
-
-    Walks the schema body, collects every ``$ref`` target, and follows
-    each target's own refs until the closure is stable.
-    """
-    all_defs = _all_definitions()
-    seen: set[str] = set()
-    frontier: set[str] = set()
-    _collect_refs(body, frontier)
-    while frontier:
-        nxt: set[str] = set()
-        for name in frontier:
-            if name in seen or name not in all_defs:
-                continue
-            seen.add(name)
-            inner: set[str] = set()
-            _collect_refs(all_defs[name], inner)
-            nxt.update(inner - seen)
-        frontier = nxt
-    return {name: all_defs[name] for name in sorted(seen)}
-
-
-# ---------------------------------------------------------------------------
 # Top-level builders
 # ---------------------------------------------------------------------------
 
 
-def _build_agent_step_event_schema(*, include_defs: bool) -> dict[str, Any]:
-    schema: dict[str, Any] = {
-        "title": "AgentStepEvent",
-        "description": "One event in the timeline of a single agent step.",
+def _agent_step_event_body() -> dict[str, Any]:
+    """AgentStepEvent shape — used standalone *and* inlined inside
+    ``AgentMessage.payload`` for the ``step_event`` kind."""
+    return {
         "type": "object",
         "additionalProperties": False,
         "required": ["kind"],
@@ -486,58 +424,46 @@ def _build_agent_step_event_schema(*, include_defs: bool) -> dict[str, Any]:
             "seq": {"type": "integer", "minimum": 0},
             "ts": {"type": "string"},
             "body": _open_object(),
-            "orchestration": {
-                "oneOf": [
-                    {"$ref": "#/$defs/OrchestrationContext"},
-                    {"type": "null"},
-                ],
-            },
-            "harness_policy": {
-                "oneOf": [
-                    {"$ref": "#/$defs/HarnessPolicy"},
-                    {"type": "null"},
-                ],
-            },
+            "orchestration": _nullable_object(_orchestration_context()),
+            "harness_policy": _nullable_object(_harness_policy()),
         },
-        "oneOf": _step_event_body_branches(),
+        "anyOf": _step_event_body_branches(),
     }
-    if include_defs:
-        body = {k: v for k, v in schema.items()}
-        schema = {
-            "$schema": SCHEMA_DIALECT,
-            **schema,
-            "$defs": _reachable_defs(body),
-        }
-    return schema
 
 
 def agent_handoff_schema() -> dict[str, Any]:
-    body = _agent_handoff_def()
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "AgentHandoff",
         "description": (
-            "Immutable handoff between agents. Carries executable args, "
-            "semantic context, and execution policy."
+            "Immutable handoff between agents (v4 flat shape). Semantic, "
+            "policy, and addressing fields live at the top level — no "
+            "nested semantic_context or execution_policy sub-objects."
         ),
-        **body,
-        "$defs": _reachable_defs(body),
+        **_agent_handoff(),
     }
 
 
 def agent_step_result_schema() -> dict[str, Any]:
-    body = _agent_step_result_def()
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "AgentStepResult",
-        "description": "Immutable result of one target-agent step.",
-        **body,
-        "$defs": _reachable_defs(body),
+        "description": (
+            "Immutable result of one target-agent step (v4 flat shape). "
+            "Semantic-result fields are at the top level; re-delegation "
+            "is by reference via next_handoff_id."
+        ),
+        **_agent_step_result(),
     }
 
 
 def agent_step_event_schema() -> dict[str, Any]:
-    return _build_agent_step_event_schema(include_defs=True)
+    return {
+        "$schema": SCHEMA_DIALECT,
+        "title": "AgentStepEvent",
+        "description": "One event in the timeline of a single agent step.",
+        **_agent_step_event_body(),
+    }
 
 
 def agent_message_schema() -> dict[str, Any]:
@@ -559,20 +485,10 @@ def agent_message_schema() -> dict[str, Any]:
             "sent_at": {"type": "string"},
             "trace_id": {"type": "string"},
             "payload": _open_object(),
-            "orchestration": {
-                "oneOf": [
-                    {"$ref": "#/$defs/OrchestrationContext"},
-                    {"type": "null"},
-                ],
-            },
-            "harness_policy": {
-                "oneOf": [
-                    {"$ref": "#/$defs/HarnessPolicy"},
-                    {"type": "null"},
-                ],
-            },
+            "orchestration": _nullable_object(_orchestration_context()),
+            "harness_policy": _nullable_object(_harness_policy()),
         },
-        "oneOf": _agent_message_payload_branches(),
+        "anyOf": _agent_message_payload_branches(),
     }
     return {
         "$schema": SCHEMA_DIALECT,
@@ -583,31 +499,6 @@ def agent_message_schema() -> dict[str, Any]:
             "discriminated by kind."
         ),
         **body,
-        "$defs": _reachable_defs(body),
-    }
-
-
-def semantic_context_schema() -> dict[str, Any]:
-    return {
-        "$schema": SCHEMA_DIALECT,
-        "title": "SemanticContext",
-        **_semantic_context_def(),
-    }
-
-
-def semantic_result_schema() -> dict[str, Any]:
-    return {
-        "$schema": SCHEMA_DIALECT,
-        "title": "SemanticResult",
-        **_semantic_result_def(),
-    }
-
-
-def execution_policy_schema() -> dict[str, Any]:
-    return {
-        "$schema": SCHEMA_DIALECT,
-        "title": "ExecutionPolicy",
-        **_execution_policy_def(),
     }
 
 
@@ -615,7 +506,7 @@ def tool_event_schema() -> dict[str, Any]:
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "ToolEvent",
-        **_tool_event_def(),
+        **_tool_event(),
     }
 
 
@@ -623,7 +514,7 @@ def error_info_schema() -> dict[str, Any]:
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "ErrorInfo",
-        **_error_info_def(),
+        **_error_info(),
     }
 
 
@@ -631,7 +522,7 @@ def orchestration_context_schema() -> dict[str, Any]:
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "OrchestrationContext",
-        **_orchestration_context_def(),
+        **_orchestration_context(),
     }
 
 
@@ -639,7 +530,7 @@ def harness_policy_schema() -> dict[str, Any]:
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "HarnessPolicy",
-        **_harness_policy_def(),
+        **_harness_policy(),
     }
 
 
@@ -647,16 +538,14 @@ def json_schemas() -> dict[str, dict[str, Any]]:
     """Return every public DTO's JSON Schema keyed by class name.
 
     Each value is a self-contained JSON Schema Draft 2020-12 document
-    with its own ``$defs`` for any nested types. A fresh dict each call.
+    with every nested type inlined — no ``$defs``, no ``$ref``. A
+    fresh dict each call so callers can mutate freely.
     """
     return {
         "AgentHandoff": agent_handoff_schema(),
         "AgentStepResult": agent_step_result_schema(),
         "AgentStepEvent": agent_step_event_schema(),
         "AgentMessage": agent_message_schema(),
-        "SemanticContext": semantic_context_schema(),
-        "SemanticResult": semantic_result_schema(),
-        "ExecutionPolicy": execution_policy_schema(),
         "ToolEvent": tool_event_schema(),
         "ErrorInfo": error_info_schema(),
         "OrchestrationContext": orchestration_context_schema(),
@@ -670,9 +559,6 @@ __all__ = [
     "agent_message_schema",
     "agent_step_event_schema",
     "agent_step_result_schema",
-    "semantic_context_schema",
-    "semantic_result_schema",
-    "execution_policy_schema",
     "tool_event_schema",
     "error_info_schema",
     "orchestration_context_schema",
@@ -728,11 +614,6 @@ def _cli(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    # argparse's add_mutually_exclusive_group doesn't mix cleanly with a
-    # positional, so the three selectors (NAME, --list, --all) are
-    # validated by hand. Combining them silently used to favor whichever
-    # branch came first; now any combination errors out so users get a
-    # clear signal.
     selectors = sum(
         bool(x) for x in (args.name, args.list, args.all)
     )

@@ -11,11 +11,8 @@ from agent_interface_protocol import (
     AgentStepEvent,
     AgentStepResult,
     ErrorInfo,
-    ExecutionPolicy,
     HarnessPolicy,
     OrchestrationContext,
-    SemanticContext,
-    SemanticResult,
     ToolEvent,
 )
 from agent_interface_protocol.schema import (
@@ -46,6 +43,42 @@ def test_all_schemas_validate_against_meta_schema():
 
 
 # ---------------------------------------------------------------------------
+# Cross-vendor flatness invariants — keep schemas portable across
+# validators and LLM structured-output systems. If you intentionally need
+# $defs/$ref/oneOf, update both the generator and these assertions.
+# ---------------------------------------------------------------------------
+
+
+def _walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk(item)
+
+
+def test_no_defs_or_refs_anywhere():
+    for name, schema in json_schemas().items():
+        for node in _walk(schema):
+            assert "$defs" not in node, f"{name}: $defs found"
+            assert "$ref" not in node, f"{name}: $ref found"
+
+
+def test_no_one_of_anywhere():
+    """``anyOf`` is broadly supported; ``oneOf`` is not (OpenAI strict
+    structured outputs only supports ``anyOf``, and Gemini historically
+    rejected ``oneOf``). The discriminated unions use ``anyOf`` keyed by
+    a ``kind`` const, which is semantically equivalent here because
+    branches are mutually exclusive.
+    """
+    for name, schema in json_schemas().items():
+        for node in _walk(schema):
+            assert "oneOf" not in node, f"{name}: oneOf found"
+
+
+# ---------------------------------------------------------------------------
 # Real payloads validate against their schemas
 # ---------------------------------------------------------------------------
 
@@ -61,14 +94,10 @@ def test_agent_handoff_payload_validates():
         lane="billing",
         action="create_invoice",
         args={"customer_id": "cust_123", "amount": 1250},
-        semantic_context=SemanticContext(
-            user_goal="invoice approved work",
-            assumptions=("budget exists",),
-        ),
-        execution_policy=ExecutionPolicy(
-            write_scope=("billing:invoices",),
-            requires_confirmation=False,
-        ),
+        user_goal="invoice approved work",
+        assumptions=("budget exists",),
+        write_scope=("billing:invoices",),
+        requires_confirmation=False,
     )
     _validate(agent_handoff_schema(), handoff.to_payload())
 
@@ -77,10 +106,8 @@ def test_agent_step_result_payload_validates():
     result = AgentStepResult(
         status="completed",
         user_visible_response="Done.",
-        semantic_result=SemanticResult(
-            action_summary="Created draft invoice inv_456.",
-            state_changes=("invoice:inv_456:draft",),
-        ),
+        action_summary="Created draft invoice inv_456.",
+        state_changes=("invoice:inv_456:draft",),
         tool_events=(
             ToolEvent(
                 name="create_invoice",
@@ -115,7 +142,7 @@ def test_agent_step_result_payload_validates():
             "final",
             AgentStepResult(
                 status="completed",
-                semantic_result=SemanticResult(action_summary="x"),
+                action_summary="x",
             ).to_payload(),
         ),
         ("phase_started", {"phase": "planner", "message": "planning"}),

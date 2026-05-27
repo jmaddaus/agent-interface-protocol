@@ -10,7 +10,6 @@ from agent_interface_protocol.agent_interface import (
     AgentStepResult,
     HarnessPolicy,
     OrchestrationContext,
-    SemanticResult,
     ToolEvent,
 )
 
@@ -106,7 +105,7 @@ def test_final_round_trip_carries_step_result():
     result_body = AgentStepResult(
         status="completed",
         user_visible_response="Done.",
-        semantic_result=SemanticResult(action_summary="x"),
+        action_summary="x",
     ).to_payload()
     event = AgentStepEvent(
         kind="final",

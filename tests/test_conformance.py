@@ -9,7 +9,6 @@ from agent_interface_protocol import (
     AgentHandoff,
     AgentStepEvent,
     AgentStepResult,
-    SemanticResult,
     StreamingAgentExecutor,
     ToolEvent,
 )
@@ -35,9 +34,7 @@ def _final(seq: int, **kwargs) -> AgentStepEvent:
     body = AgentStepResult(
         status="completed",
         user_visible_response=kwargs.get("response", "ok"),
-        semantic_result=SemanticResult(
-            action_summary=kwargs.get("summary", "did the thing"),
-        ),
+        action_summary=kwargs.get("summary", "did the thing"),
     ).to_payload()
     return AgentStepEvent(
         kind="final",
@@ -269,7 +266,7 @@ class _GoodSyncExecutor(AgentExecutor):
         return AgentStepResult(
             status="completed",
             user_visible_response="ok",
-            semantic_result=SemanticResult(action_summary="x"),
+            action_summary="x",
         )
 
 
