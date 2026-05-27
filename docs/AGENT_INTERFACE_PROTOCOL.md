@@ -37,7 +37,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
    emits `PROTOCOL_VERSION` and accepts any version in
    `SUPPORTED_PROTOCOL_VERSIONS`, preserving the incoming version on parse.
 
-8. Transport identity is distinct from semantic identity.
+7. Transport identity is distinct from semantic identity.
 
    `AgentMessage.sender` / `recipient` are transport-layer routing
    identities (a queue topic, a service address, a router). They are
@@ -45,7 +45,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
    `target_agent`, which are the semantic actors. Do not conflate them
    — a router may sit between sender and the semantic target.
 
-9. Step events are ordered per producer.
+8. Step events are ordered per producer.
 
    Within one `(handoff_id, step_id)` pair, `AgentStepEvent.seq` is
    monotonically increasing per producer. Consumers may rely on `seq`
@@ -54,7 +54,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
    stronger guarantee that enables drop detection on resume, but
    consumers must not assume it unless the producer documents it.
 
-10. A step terminates exactly once.
+9. A step terminates exactly once.
 
     A step ends with one terminal signal — either an `AgentStepEvent`
     of kind `"final"` or an `AgentMessage` of kind `"step_result"`.
@@ -62,12 +62,12 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     after the terminal signal. This is a producer contract; AIP
     cannot enforce it across messages from a single object.
 
-11. Error codes are stable identifiers.
+10. Error codes are stable identifiers.
 
     `ErrorInfo.code` values are machine-readable. Do not parse
     `ErrorInfo.message` to recover semantics.
 
-12. Orchestration metadata is descriptive, not transport identity.
+11. Orchestration metadata is descriptive, not transport identity.
 
     `OrchestrationContext` fields (`run_id`, `step_id`, `phase`,
     `capability`, `fanout_group_id`, `checkpoint_id`) describe
@@ -75,7 +75,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     `correlation_id` / `in_reply_to` describe message transport.
     Do not conflate them — they answer different questions.
 
-13. Harness policy is an execution contract.
+12. Harness policy is an execution contract.
 
     `HarnessPolicy.allowed_tools`, `required_outputs`,
     `max_tool_calls`, `max_steps`, and `requires_self_evaluation`
@@ -83,7 +83,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     contract; producers should emit events consistent with it, and
     consumers may reject or flag violations.
 
-14. Phase values are open strings; reuse common labels.
+13. Phase values are open strings; reuse common labels.
 
     `OrchestrationContext.phase` and the `phase` field on
     `phase_started` / `phase_completed` event bodies are open
@@ -91,13 +91,13 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     runtimes: `planner`, `handler`, `tool`, `narrator`, `evaluator`.
     Custom phases are allowed for product-specific topologies.
 
-15. Checkpoint bodies are opaque to AIP.
+14. Checkpoint bodies are opaque to AIP.
 
     `checkpoint` event bodies carry `checkpoint_id` and `state`.
     AIP preserves `state` for resume/replay but does not interpret
     it; runtimes own the schema.
 
-16. Cross-layer metadata is consistent; the inner value is authoritative.
+15. Cross-layer metadata is consistent; the inner value is authoritative.
 
     `orchestration` and `harness_policy` may appear on both an
     `AgentMessage` envelope and the `AgentStepEvent` it carries.
@@ -109,7 +109,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     convenience. Consumers MAY treat divergence as an inconsistency
     error and reject the message.
 
-17. Events are envelope-bound for versioning.
+16. Events are envelope-bound for versioning.
 
     `AgentStepEvent` does not carry an `agent_interface_version`.
     Events are designed to ride inside an `AgentMessage` envelope,
@@ -245,6 +245,45 @@ and the orchestration identity (`run_id`, `step_id`, `phase`) are
 independent. A router can rewrite `sender`/`recipient` without
 disturbing the orchestration topology, and an orchestrator can
 re-emit a step under a new `run_id` without touching transport IDs.
+
+## JSON Schema Export
+
+Every public DTO has a corresponding JSON Schema (Draft 2020-12) in
+`agent_interface_protocol.schema`, mirroring the shape `from_payload`
+accepts. The same schemas are shipped as static files under
+`agent_interface_protocol/schemas/` (in the wheel and sdist) for
+non-Python consumers and codegen tools.
+
+Discriminated unions (`AgentMessage.kind`, `AgentStepEvent.kind`) use
+`oneOf` with `const` on the discriminator and the corresponding payload
+/body shape per branch — cross-kind payloads fail schema validation
+the same way they do in Python's `from_payload`.
+
+The schemas are *necessary, not sufficient*: they enforce types, enums,
+and unknown-field rejection, but defer fully-specified semantics (e.g.
+a real `handoff` needs more than just `{"kind": "handoff"}`) to the
+domain layer. Non-Python consumers should treat schema validation as a
+first pass and run the same domain checks `from_payload` would.
+
+A small CLI (`python -m agent_interface_protocol.schema`) emits the
+schemas as JSON for piping into other-language toolchains; no
+`jsonschema` runtime dependency required.
+
+## Conformance Suite
+
+`agent_interface_protocol.conformance` ships reusable assertions that
+encode the invariants above — strictly-increasing `seq`, exactly one
+terminal `final` event, no post-terminal emissions, structural contract
+on `describe`/`validate_handoff`/`cancel`. Third-party packages
+implementing `StreamingAgentExecutor` or `AgentExecutor` can call
+`assert_streaming_executor_conformant` / `assert_sync_executor_conformant`
+from their own test suites to claim protocol conformance and stay
+aligned as new versions add new kinds.
+
+Per-invariant helpers (`assert_seq_strictly_increasing`,
+`assert_exactly_one_final`, `assert_no_events_after_final`,
+`assert_kinds_are_known`, `assert_final_body_is_step_result`) are
+exposed for cases where downstream wants more granular assertions.
 
 ## Extension Points
 
