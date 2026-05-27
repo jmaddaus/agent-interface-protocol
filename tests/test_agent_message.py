@@ -13,6 +13,8 @@ from agent_interface_protocol.agent_interface import (
     AgentStepEvent,
     AgentStepResult,
     ErrorInfo,
+    HarnessPolicy,
+    OrchestrationContext,
     SemanticContext,
     SemanticResult,
     ToolEvent,
@@ -245,3 +247,141 @@ def test_envelope_addressing_is_distinct_from_semantic_agents():
     inner = AgentHandoff.from_payload(dict(msg.payload))
     assert inner.source_agent == "billing_bot"
     assert inner.target_agent == "invoice_agent"
+
+
+# ---------------------------------------------------------------------------
+# v3: orchestration and harness_policy on the envelope
+# ---------------------------------------------------------------------------
+
+
+def test_envelope_with_orchestration_round_trip():
+    msg = AgentMessage(
+        kind="step_event",
+        message_id="m1",
+        correlation_id="h1",
+        sender="planner@svc",
+        recipient="handler@svc",
+        payload=AgentStepEvent(
+            kind="phase_started", seq=0,
+            body={"phase": "handler", "message": ""},
+        ).to_payload(),
+        orchestration=OrchestrationContext(
+            run_id="run-1",
+            root_handoff_id="h1",
+            step_id="s1",
+            phase="handler",
+            capability="messaging.send",
+            fanout_group_id="g1",
+        ),
+    )
+    _round_trip(msg)
+
+
+def test_envelope_with_harness_policy_round_trip():
+    msg = AgentMessage(
+        kind="handoff",
+        message_id="m2",
+        correlation_id="h2",
+        payload=AgentHandoff(lane="messaging", action="send").to_payload(),
+        harness_policy=HarnessPolicy(
+            contract_id="messaging_v1",
+            allowed_tools=("send_message",),
+            required_outputs=("message_id",),
+            max_tool_calls=2,
+            max_steps=1,
+            requires_self_evaluation=False,
+            budget={"tokens": 4000},
+        ),
+    )
+    _round_trip(msg)
+
+
+def test_envelope_with_both_orchestration_and_harness_round_trip():
+    msg = AgentMessage(
+        kind="step_event",
+        correlation_id="h3",
+        payload=AgentStepEvent(
+            kind="evaluation", seq=5,
+            body={"passed": True, "score": 0.9, "findings": [], "details": {}},
+        ).to_payload(),
+        orchestration=OrchestrationContext(
+            run_id="run-3", phase="evaluator",
+        ),
+        harness_policy=HarnessPolicy(
+            contract_id="eval_v1", requires_self_evaluation=True,
+        ),
+    )
+    _round_trip(msg)
+
+
+def test_envelope_accepts_mapping_for_orchestration_during_construction():
+    """Lenient construction: a plain mapping is converted to the DTO."""
+    msg = AgentMessage(
+        kind="ack",
+        payload={"accepted": True, "reason": ""},
+        orchestration={"run_id": "r1", "phase": "planner"},  # type: ignore[arg-type]
+    )
+    assert isinstance(msg.orchestration, OrchestrationContext)
+    assert msg.orchestration.phase == "planner"
+
+
+def test_envelope_absent_orchestration_and_harness_serialize_as_null():
+    msg = AgentMessage(kind="ack", payload={"accepted": True, "reason": ""})
+    payload = msg.to_payload()
+    assert payload["orchestration"] is None
+    assert payload["harness_policy"] is None
+    assert AgentMessage.from_payload(payload) == msg
+
+
+def test_transport_identity_stays_distinct_from_orchestration_identity():
+    """run_id/step_id/phase describe execution topology; message_id/
+    correlation_id describe message transport. They are independent."""
+    msg = AgentMessage(
+        kind="step_event",
+        message_id="m-xyz",
+        correlation_id="h-routing-1",
+        in_reply_to="m-prev",
+        sender="router@svc",
+        recipient="evaluator@svc",
+        payload=AgentStepEvent(
+            kind="evaluation", seq=7,
+            body={"passed": True, "score": 1.0, "findings": [], "details": {}},
+        ).to_payload(),
+        orchestration=OrchestrationContext(
+            run_id="run-42",
+            root_handoff_id="h-orig",
+            step_id="s-eval",
+            phase="evaluator",
+            capability="evaluation.rubric_v3",
+        ),
+    )
+    # Transport identity:
+    assert msg.message_id == "m-xyz"
+    assert msg.correlation_id == "h-routing-1"
+    assert msg.in_reply_to == "m-prev"
+    # Orchestration identity:
+    assert msg.orchestration is not None
+    assert msg.orchestration.run_id == "run-42"
+    assert msg.orchestration.step_id == "s-eval"
+    assert msg.orchestration.phase == "evaluator"
+    # The two namespaces do not collide:
+    assert msg.message_id != msg.orchestration.step_id
+    assert msg.correlation_id != msg.orchestration.run_id
+
+
+def test_envelope_rejects_wrong_typed_orchestration():
+    with pytest.raises(ValueError, match="must be a mapping"):
+        AgentMessage.from_payload({
+            "kind": "ack",
+            "payload": {"accepted": True, "reason": ""},
+            "orchestration": "not-a-mapping",
+        })
+
+
+def test_envelope_rejects_unknown_orchestration_field():
+    with pytest.raises(ValueError, match="unknown OrchestrationContext field"):
+        AgentMessage.from_payload({
+            "kind": "ack",
+            "payload": {"accepted": True, "reason": ""},
+            "orchestration": {"run_id": "r1", "tenant": "x"},
+        })

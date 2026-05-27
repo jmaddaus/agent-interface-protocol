@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-interface-protocol"
-version = "0.3.0"
+version = "0.4.0"
 description = "Immutable Agent Interface Protocol DTOs for host and agent handoff."
 requires-python = ">=3.11"
 readme = "README.md"

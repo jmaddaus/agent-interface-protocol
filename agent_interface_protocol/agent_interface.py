@@ -24,14 +24,14 @@ from typing import Any, Iterator, Literal, Mapping
 
 
 # Version this build emits when serializing freshly-constructed objects.
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 # Inclusive range of protocol versions this build can parse. Widen this
 # (not just PROTOCOL_VERSION) when adding a new version so that services
 # deploying on a rolling basis can accept both the old and the new payload
 # during the rollout window.
 MIN_SUPPORTED_PROTOCOL_VERSION = 1
-MAX_SUPPORTED_PROTOCOL_VERSION = 2
+MAX_SUPPORTED_PROTOCOL_VERSION = 3
 SUPPORTED_PROTOCOL_VERSIONS: frozenset[int] = frozenset(
     range(MIN_SUPPORTED_PROTOCOL_VERSION, MAX_SUPPORTED_PROTOCOL_VERSION + 1)
 )
@@ -233,6 +233,25 @@ def _parse_optional_number(
             f"got {type(value).__name__}"
         )
     return float(value)
+
+
+def _parse_optional_int(
+    data: Mapping[str, Any], key: str, where: str,
+    *, min_value: int | None = None,
+) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"{where} field {key!r} must be an integer or null, "
+            f"got {type(value).__name__}"
+        )
+    if min_value is not None and value < min_value:
+        raise ValueError(
+            f"{where} field {key!r} must be >= {min_value}, got {value}"
+        )
+    return value
 
 
 _SEMANTIC_CONTEXT_KEYS: frozenset[str] = frozenset({
@@ -756,6 +775,224 @@ class ErrorInfo:
         }
 
 
+_ORCHESTRATION_CONTEXT_KEYS: frozenset[str] = frozenset({
+    "run_id",
+    "root_handoff_id",
+    "parent_step_id",
+    "step_id",
+    "phase",
+    "capability",
+    "fanout_group_id",
+    "checkpoint_id",
+    "extra",
+})
+
+
+@dataclass(frozen=True)
+class OrchestrationContext:
+    """Where a message or event sits inside a larger orchestrated run.
+
+    AIP does not prescribe an orchestration model — planner/handler/
+    evaluator, ReAct, BDI, multi-agent debate, or anything else. This
+    DTO simply gives runtimes a stable place to put execution-topology
+    metadata so that orchestrated systems can interoperate.
+
+    Orchestration metadata is descriptive, not transport identity.
+    ``run_id``/``step_id``/``phase`` describe execution topology;
+    ``AgentMessage.message_id``/``correlation_id`` describe message
+    transport. Do not conflate them.
+    """
+
+    run_id: str = ""
+    root_handoff_id: str = ""
+    parent_step_id: str = ""
+    step_id: str = ""
+    phase: str = ""
+    capability: str = ""
+    fanout_group_id: str = ""
+    checkpoint_id: str = ""
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "run_id", str(self.run_id or ""))
+        object.__setattr__(
+            self, "root_handoff_id", str(self.root_handoff_id or ""),
+        )
+        object.__setattr__(
+            self, "parent_step_id", str(self.parent_step_id or ""),
+        )
+        object.__setattr__(self, "step_id", str(self.step_id or ""))
+        object.__setattr__(self, "phase", str(self.phase or ""))
+        object.__setattr__(self, "capability", str(self.capability or ""))
+        object.__setattr__(
+            self, "fanout_group_id", str(self.fanout_group_id or ""),
+        )
+        object.__setattr__(
+            self, "checkpoint_id", str(self.checkpoint_id or ""),
+        )
+        object.__setattr__(self, "extra", _frozen_mapping(self.extra))
+
+    @classmethod
+    def from_payload(
+        cls, payload: Mapping[str, Any] | None,
+    ) -> "OrchestrationContext":
+        data = _require_mapping(payload, "OrchestrationContext")
+        _reject_unknown_keys(
+            data, _ORCHESTRATION_CONTEXT_KEYS, "OrchestrationContext",
+        )
+        return cls(
+            run_id=_parse_str(data, "run_id", "OrchestrationContext"),
+            root_handoff_id=_parse_str(
+                data, "root_handoff_id", "OrchestrationContext",
+            ),
+            parent_step_id=_parse_str(
+                data, "parent_step_id", "OrchestrationContext",
+            ),
+            step_id=_parse_str(data, "step_id", "OrchestrationContext"),
+            phase=_parse_str(data, "phase", "OrchestrationContext"),
+            capability=_parse_str(data, "capability", "OrchestrationContext"),
+            fanout_group_id=_parse_str(
+                data, "fanout_group_id", "OrchestrationContext",
+            ),
+            checkpoint_id=_parse_str(
+                data, "checkpoint_id", "OrchestrationContext",
+            ),
+            extra=_parse_mapping(data, "extra", "OrchestrationContext"),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "root_handoff_id": self.root_handoff_id,
+            "parent_step_id": self.parent_step_id,
+            "step_id": self.step_id,
+            "phase": self.phase,
+            "capability": self.capability,
+            "fanout_group_id": self.fanout_group_id,
+            "checkpoint_id": self.checkpoint_id,
+            "extra": _thaw_value(self.extra),
+        }
+
+
+_HARNESS_POLICY_KEYS: frozenset[str] = frozenset({
+    "contract_id",
+    "allowed_tools",
+    "required_outputs",
+    "max_tool_calls",
+    "max_steps",
+    "requires_self_evaluation",
+    "budget",
+    "extra",
+})
+
+
+@dataclass(frozen=True)
+class HarnessPolicy:
+    """Execution constraints and admission policy for a step or message.
+
+    A harness policy is descriptive but enforceable: producers should
+    emit events consistent with the declared policy, and consumers may
+    reject or flag violations. AIP itself does not enforce — it just
+    carries the contract so both sides can.
+
+    ``max_tool_calls`` and ``max_steps`` must be non-negative integers
+    when present; ``None`` means "no declared limit".
+
+    ``budget`` is opaque to AIP — runtimes carry token/time/cost
+    metadata there in whatever shape they need.
+    """
+
+    contract_id: str = ""
+    allowed_tools: tuple[str, ...] = field(default_factory=tuple)
+    required_outputs: tuple[str, ...] = field(default_factory=tuple)
+    max_tool_calls: int | None = None
+    max_steps: int | None = None
+    requires_self_evaluation: bool = False
+    budget: Mapping[str, Any] = field(default_factory=dict)
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "contract_id", str(self.contract_id or ""))
+        object.__setattr__(
+            self, "allowed_tools", _tuple_of_str(self.allowed_tools),
+        )
+        object.__setattr__(
+            self, "required_outputs", _tuple_of_str(self.required_outputs),
+        )
+        if self.max_tool_calls is not None:
+            if (
+                isinstance(self.max_tool_calls, bool)
+                or not isinstance(self.max_tool_calls, int)
+            ):
+                raise ValueError(
+                    "HarnessPolicy.max_tool_calls must be an integer or None, "
+                    f"got {type(self.max_tool_calls).__name__}"
+                )
+            if self.max_tool_calls < 0:
+                raise ValueError(
+                    "HarnessPolicy.max_tool_calls must be >= 0, "
+                    f"got {self.max_tool_calls}"
+                )
+        if self.max_steps is not None:
+            if (
+                isinstance(self.max_steps, bool)
+                or not isinstance(self.max_steps, int)
+            ):
+                raise ValueError(
+                    "HarnessPolicy.max_steps must be an integer or None, "
+                    f"got {type(self.max_steps).__name__}"
+                )
+            if self.max_steps < 0:
+                raise ValueError(
+                    "HarnessPolicy.max_steps must be >= 0, "
+                    f"got {self.max_steps}"
+                )
+        object.__setattr__(
+            self,
+            "requires_self_evaluation",
+            bool(self.requires_self_evaluation),
+        )
+        object.__setattr__(self, "budget", _frozen_mapping(self.budget))
+        object.__setattr__(self, "extra", _frozen_mapping(self.extra))
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any] | None) -> "HarnessPolicy":
+        data = _require_mapping(payload, "HarnessPolicy")
+        _reject_unknown_keys(data, _HARNESS_POLICY_KEYS, "HarnessPolicy")
+        return cls(
+            contract_id=_parse_str(data, "contract_id", "HarnessPolicy"),
+            allowed_tools=_parse_str_tuple(
+                data, "allowed_tools", "HarnessPolicy",
+            ),
+            required_outputs=_parse_str_tuple(
+                data, "required_outputs", "HarnessPolicy",
+            ),
+            max_tool_calls=_parse_optional_int(
+                data, "max_tool_calls", "HarnessPolicy", min_value=0,
+            ),
+            max_steps=_parse_optional_int(
+                data, "max_steps", "HarnessPolicy", min_value=0,
+            ),
+            requires_self_evaluation=_parse_bool(
+                data, "requires_self_evaluation", "HarnessPolicy", False,
+            ),
+            budget=_parse_mapping(data, "budget", "HarnessPolicy"),
+            extra=_parse_mapping(data, "extra", "HarnessPolicy"),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "contract_id": self.contract_id,
+            "allowed_tools": list(self.allowed_tools),
+            "required_outputs": list(self.required_outputs),
+            "max_tool_calls": self.max_tool_calls,
+            "max_steps": self.max_steps,
+            "requires_self_evaluation": self.requires_self_evaluation,
+            "budget": _thaw_value(self.budget),
+            "extra": _thaw_value(self.extra),
+        }
+
+
 AgentStepEventKind = Literal[
     "accepted",
     "progress",
@@ -763,6 +1000,10 @@ AgentStepEventKind = Literal[
     "partial_response",
     "question",
     "final",
+    "phase_started",
+    "phase_completed",
+    "checkpoint",
+    "evaluation",
 ]
 
 AGENT_STEP_EVENT_KINDS: frozenset[str] = frozenset({
@@ -772,6 +1013,10 @@ AGENT_STEP_EVENT_KINDS: frozenset[str] = frozenset({
     "partial_response",
     "question",
     "final",
+    "phase_started",
+    "phase_completed",
+    "checkpoint",
+    "evaluation",
 })
 
 
@@ -782,12 +1027,26 @@ _AGENT_STEP_EVENT_KEYS: frozenset[str] = frozenset({
     "ts",
     "kind",
     "body",
+    "orchestration",
+    "harness_policy",
 })
 
 
 _STEP_EVENT_PROGRESS_KEYS: frozenset[str] = frozenset({"fraction", "message"})
 _STEP_EVENT_PARTIAL_RESPONSE_KEYS: frozenset[str] = frozenset({"text", "delta"})
 _STEP_EVENT_QUESTION_KEYS: frozenset[str] = frozenset({"question", "schema"})
+_STEP_EVENT_PHASE_STARTED_KEYS: frozenset[str] = frozenset(
+    {"phase", "message"},
+)
+_STEP_EVENT_PHASE_COMPLETED_KEYS: frozenset[str] = frozenset(
+    {"phase", "summary", "metrics"},
+)
+_STEP_EVENT_CHECKPOINT_KEYS: frozenset[str] = frozenset(
+    {"checkpoint_id", "state"},
+)
+_STEP_EVENT_EVALUATION_KEYS: frozenset[str] = frozenset(
+    {"passed", "score", "findings", "details"},
+)
 
 
 def _validate_step_event_body(kind: str, body: Mapping[str, Any]) -> None:
@@ -816,6 +1075,25 @@ def _validate_step_event_body(kind: str, body: Mapping[str, Any]) -> None:
         _parse_mapping(body, "schema", where)
     elif kind == "final":
         AgentStepResult.from_payload(body)
+    elif kind == "phase_started":
+        _reject_unknown_keys(body, _STEP_EVENT_PHASE_STARTED_KEYS, where)
+        _parse_str(body, "phase", where)
+        _parse_str(body, "message", where)
+    elif kind == "phase_completed":
+        _reject_unknown_keys(body, _STEP_EVENT_PHASE_COMPLETED_KEYS, where)
+        _parse_str(body, "phase", where)
+        _parse_str(body, "summary", where)
+        _parse_mapping(body, "metrics", where)
+    elif kind == "checkpoint":
+        _reject_unknown_keys(body, _STEP_EVENT_CHECKPOINT_KEYS, where)
+        _parse_str(body, "checkpoint_id", where)
+        _parse_mapping(body, "state", where)
+    elif kind == "evaluation":
+        _reject_unknown_keys(body, _STEP_EVENT_EVALUATION_KEYS, where)
+        _parse_bool(body, "passed", where, False)
+        _parse_optional_number(body, "score", where)
+        _parse_str_tuple(body, "findings", where)
+        _parse_mapping(body, "details", where)
     else:
         raise ValueError(f"unknown AgentStepEvent kind: {kind!r}")
 
@@ -840,6 +1118,8 @@ class AgentStepEvent:
     seq: int = 0
     ts: str = ""
     body: Mapping[str, Any] = field(default_factory=dict)
+    orchestration: OrchestrationContext | None = None
+    harness_policy: HarnessPolicy | None = None
 
     def __post_init__(self) -> None:
         kind = str(self.kind or "")
@@ -859,6 +1139,22 @@ class AgentStepEvent:
             )
         object.__setattr__(self, "ts", str(self.ts or ""))
         object.__setattr__(self, "body", _frozen_mapping(self.body))
+        if self.orchestration is not None and not isinstance(
+            self.orchestration, OrchestrationContext,
+        ):
+            object.__setattr__(
+                self,
+                "orchestration",
+                OrchestrationContext.from_payload(self.orchestration),  # type: ignore[arg-type]
+            )
+        if self.harness_policy is not None and not isinstance(
+            self.harness_policy, HarnessPolicy,
+        ):
+            object.__setattr__(
+                self,
+                "harness_policy",
+                HarnessPolicy.from_payload(self.harness_policy),  # type: ignore[arg-type]
+            )
         _validate_step_event_body(self.kind, self.body)
 
     @classmethod
@@ -879,6 +1175,8 @@ class AgentStepEvent:
                 f"AgentStepEvent field 'seq' must be non-negative, got {seq_value}"
             )
         body = _parse_mapping(data, "body", "AgentStepEvent")
+        orch_value = data.get("orchestration")
+        harness_value = data.get("harness_policy")
         return cls(
             kind=kind,  # type: ignore[arg-type]
             handoff_id=_parse_str(data, "handoff_id", "AgentStepEvent"),
@@ -886,6 +1184,16 @@ class AgentStepEvent:
             seq=seq_value,
             ts=_parse_str(data, "ts", "AgentStepEvent"),
             body=body,
+            orchestration=(
+                OrchestrationContext.from_payload(orch_value)
+                if orch_value is not None
+                else None
+            ),
+            harness_policy=(
+                HarnessPolicy.from_payload(harness_value)
+                if harness_value is not None
+                else None
+            ),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -896,6 +1204,16 @@ class AgentStepEvent:
             "seq": self.seq,
             "ts": self.ts,
             "body": _thaw_value(self.body),
+            "orchestration": (
+                self.orchestration.to_payload()
+                if self.orchestration is not None
+                else None
+            ),
+            "harness_policy": (
+                self.harness_policy.to_payload()
+                if self.harness_policy is not None
+                else None
+            ),
         }
 
 
@@ -929,6 +1247,8 @@ _AGENT_MESSAGE_KEYS: frozenset[str] = frozenset({
     "trace_id",
     "kind",
     "payload",
+    "orchestration",
+    "harness_policy",
 })
 
 
@@ -1000,6 +1320,8 @@ class AgentMessage:
     sent_at: str = ""
     trace_id: str = ""
     payload: Mapping[str, Any] = field(default_factory=dict)
+    orchestration: OrchestrationContext | None = None
+    harness_policy: HarnessPolicy | None = None
     protocol_version: int = PROTOCOL_VERSION
 
     def __post_init__(self) -> None:
@@ -1017,6 +1339,22 @@ class AgentMessage:
         object.__setattr__(self, "sent_at", str(self.sent_at or ""))
         object.__setattr__(self, "trace_id", str(self.trace_id or ""))
         object.__setattr__(self, "payload", _frozen_mapping(self.payload))
+        if self.orchestration is not None and not isinstance(
+            self.orchestration, OrchestrationContext,
+        ):
+            object.__setattr__(
+                self,
+                "orchestration",
+                OrchestrationContext.from_payload(self.orchestration),  # type: ignore[arg-type]
+            )
+        if self.harness_policy is not None and not isinstance(
+            self.harness_policy, HarnessPolicy,
+        ):
+            object.__setattr__(
+                self,
+                "harness_policy",
+                HarnessPolicy.from_payload(self.harness_policy),  # type: ignore[arg-type]
+            )
         object.__setattr__(
             self,
             "protocol_version",
@@ -1032,6 +1370,8 @@ class AgentMessage:
         if kind not in AGENT_MESSAGE_KINDS:
             raise ValueError(f"unknown AgentMessage kind: {kind!r}")
         body = _parse_mapping(data, "payload", "AgentMessage")
+        orch_value = data.get("orchestration")
+        harness_value = data.get("harness_policy")
         return cls(
             kind=kind,  # type: ignore[arg-type]
             message_id=_parse_str(data, "message_id", "AgentMessage"),
@@ -1042,6 +1382,16 @@ class AgentMessage:
             sent_at=_parse_str(data, "sent_at", "AgentMessage"),
             trace_id=_parse_str(data, "trace_id", "AgentMessage"),
             payload=body,
+            orchestration=(
+                OrchestrationContext.from_payload(orch_value)
+                if orch_value is not None
+                else None
+            ),
+            harness_policy=(
+                HarnessPolicy.from_payload(harness_value)
+                if harness_value is not None
+                else None
+            ),
             protocol_version=_validate_protocol_version(
                 data.get("agent_interface_version", PROTOCOL_VERSION),
             ),
@@ -1059,6 +1409,16 @@ class AgentMessage:
             "sent_at": self.sent_at,
             "trace_id": self.trace_id,
             "payload": _thaw_value(self.payload),
+            "orchestration": (
+                self.orchestration.to_payload()
+                if self.orchestration is not None
+                else None
+            ),
+            "harness_policy": (
+                self.harness_policy.to_payload()
+                if self.harness_policy is not None
+                else None
+            ),
         }
 
 

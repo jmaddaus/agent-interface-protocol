@@ -154,8 +154,8 @@ def test_step_result_is_not_mapping_compatible():
         result["answer"]  # type: ignore[index]
 
 
-def test_v1_handoff_payloads_still_parse_under_v2():
-    """v1 producers must continue to parse after v2 widens the version range."""
+def test_v1_handoff_payloads_still_parse_under_current_version():
+    """v1 producers must continue to parse as the supported range widens."""
     v1_payload = {
         "agent_interface_version": 1,
         "handoff_id": "h1",
@@ -189,7 +189,7 @@ def test_v1_handoff_payloads_still_parse_under_v2():
     assert handoff.to_payload()["agent_interface_version"] == 1
 
 
-def test_v1_step_result_payloads_still_parse_under_v2():
+def test_v1_step_result_payloads_still_parse_under_current_version():
     v1_payload = {
         "agent_interface_version": 1,
         "status": "completed",

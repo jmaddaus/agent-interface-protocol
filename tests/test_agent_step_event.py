@@ -8,6 +8,8 @@ from agent_interface_protocol.agent_interface import (
     AGENT_STEP_EVENT_KINDS,
     AgentStepEvent,
     AgentStepResult,
+    HarnessPolicy,
+    OrchestrationContext,
     SemanticResult,
     ToolEvent,
 )
@@ -25,6 +27,10 @@ def test_known_kinds_exposed():
         "partial_response",
         "question",
         "final",
+        "phase_started",
+        "phase_completed",
+        "checkpoint",
+        "evaluation",
     })
 
 
@@ -237,3 +243,214 @@ def test_cross_kind_body_rejected():
     # ToolEvent fields like 'name' are not valid AgentStepResult fields.
     with pytest.raises(ValueError, match="unknown AgentStepResult field"):
         AgentStepEvent(kind="final", seq=1, body={"name": "lookup"})
+
+
+# ---------------------------------------------------------------------------
+# v3 orchestration event kinds
+# ---------------------------------------------------------------------------
+
+
+def test_phase_started_round_trip():
+    event = AgentStepEvent(
+        kind="phase_started",
+        handoff_id="h1",
+        step_id="s1",
+        seq=10,
+        body={"phase": "planner", "message": "planning route"},
+    )
+    _round_trip(event)
+
+
+def test_phase_completed_round_trip():
+    event = AgentStepEvent(
+        kind="phase_completed",
+        handoff_id="h1",
+        step_id="s1",
+        seq=11,
+        body={
+            "phase": "planner",
+            "summary": "planned 3 sub-steps",
+            "metrics": {"sub_steps": 3, "tokens": 1200},
+        },
+    )
+    _round_trip(event)
+
+
+def test_checkpoint_round_trip():
+    event = AgentStepEvent(
+        kind="checkpoint",
+        handoff_id="h1",
+        step_id="s1",
+        seq=12,
+        body={
+            "checkpoint_id": "ck-1",
+            "state": {"cursor": 42, "buffer": ["a", "b"]},
+        },
+    )
+    _round_trip(event)
+
+
+def test_evaluation_round_trip():
+    event = AgentStepEvent(
+        kind="evaluation",
+        handoff_id="h1",
+        step_id="s1",
+        seq=13,
+        body={
+            "passed": True,
+            "score": 0.92,
+            "findings": ["matches schema", "no PII leakage"],
+            "details": {"rubric_version": "v3"},
+        },
+    )
+    _round_trip(event)
+
+
+def test_evaluation_null_score_round_trip():
+    event = AgentStepEvent(
+        kind="evaluation",
+        seq=14,
+        body={"passed": False, "score": None, "findings": [], "details": {}},
+    )
+    _round_trip(event)
+
+
+def test_phase_started_body_validation():
+    with pytest.raises(
+        ValueError, match=r"unknown AgentStepEvent.body\[phase_started\] field",
+    ):
+        AgentStepEvent(
+            kind="phase_started", seq=1,
+            body={"phase": "planner", "message": "x", "extra_key": 1},
+        )
+    with pytest.raises(ValueError, match="must be a string"):
+        AgentStepEvent(kind="phase_started", seq=1, body={"phase": 1})
+
+
+def test_phase_completed_body_validation():
+    with pytest.raises(
+        ValueError, match=r"unknown AgentStepEvent.body\[phase_completed\] field",
+    ):
+        AgentStepEvent(
+            kind="phase_completed", seq=1,
+            body={"phase": "x", "summary": "y", "metrics": {}, "extra": 1},
+        )
+    with pytest.raises(ValueError, match="must be a mapping"):
+        AgentStepEvent(
+            kind="phase_completed", seq=1,
+            body={"phase": "x", "summary": "y", "metrics": [1, 2]},
+        )
+
+
+def test_checkpoint_body_validation():
+    with pytest.raises(
+        ValueError, match=r"unknown AgentStepEvent.body\[checkpoint\] field",
+    ):
+        AgentStepEvent(
+            kind="checkpoint", seq=1,
+            body={"checkpoint_id": "ck", "state": {}, "extra_key": 1},
+        )
+    with pytest.raises(ValueError, match="must be a string"):
+        AgentStepEvent(
+            kind="checkpoint", seq=1, body={"checkpoint_id": 1, "state": {}},
+        )
+    with pytest.raises(ValueError, match="must be a mapping"):
+        AgentStepEvent(
+            kind="checkpoint", seq=1,
+            body={"checkpoint_id": "ck", "state": "frozen"},
+        )
+
+
+def test_evaluation_body_validation():
+    with pytest.raises(
+        ValueError, match=r"unknown AgentStepEvent.body\[evaluation\] field",
+    ):
+        AgentStepEvent(
+            kind="evaluation", seq=1,
+            body={
+                "passed": True, "score": 1.0, "findings": [],
+                "details": {}, "extra_key": 1,
+            },
+        )
+    with pytest.raises(ValueError, match="must be a boolean"):
+        AgentStepEvent(kind="evaluation", seq=1, body={"passed": "yes"})
+    with pytest.raises(ValueError, match="must be a number or null"):
+        AgentStepEvent(kind="evaluation", seq=1, body={"score": "good"})
+    with pytest.raises(ValueError, match="must be a list of strings"):
+        AgentStepEvent(kind="evaluation", seq=1, body={"findings": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# Optional orchestration / harness_policy fields
+# ---------------------------------------------------------------------------
+
+
+def test_event_with_orchestration_round_trip():
+    event = AgentStepEvent(
+        kind="phase_started",
+        handoff_id="h1",
+        step_id="s1",
+        seq=20,
+        body={"phase": "handler", "message": ""},
+        orchestration=OrchestrationContext(
+            run_id="run-1",
+            root_handoff_id="h1",
+            step_id="s1",
+            phase="handler",
+            capability="messaging.send",
+        ),
+    )
+    _round_trip(event)
+
+
+def test_event_with_harness_policy_round_trip():
+    event = AgentStepEvent(
+        kind="accepted",
+        handoff_id="h1",
+        step_id="s1",
+        seq=21,
+        harness_policy=HarnessPolicy(
+            contract_id="messaging_v1",
+            allowed_tools=("send_message",),
+            required_outputs=("message_id",),
+            max_tool_calls=3,
+            requires_self_evaluation=True,
+        ),
+    )
+    _round_trip(event)
+
+
+def test_event_with_orchestration_and_harness_round_trip():
+    event = AgentStepEvent(
+        kind="evaluation",
+        handoff_id="h1",
+        step_id="s1",
+        seq=22,
+        body={
+            "passed": True, "score": 1.0,
+            "findings": [], "details": {},
+        },
+        orchestration=OrchestrationContext(
+            run_id="run-1", phase="evaluator",
+        ),
+        harness_policy=HarnessPolicy(contract_id="eval_v1"),
+    )
+    _round_trip(event)
+
+
+def test_event_accepts_mapping_for_orchestration():
+    """Lenient construction: a plain mapping is converted to the DTO."""
+    event = AgentStepEvent(
+        kind="accepted", seq=0,
+        orchestration={"run_id": "r1", "phase": "planner"},  # type: ignore[arg-type]
+    )
+    assert isinstance(event.orchestration, OrchestrationContext)
+    assert event.orchestration.run_id == "r1"
+
+
+def test_orchestration_absent_serializes_as_null():
+    event = AgentStepEvent(kind="accepted", seq=0)
+    payload = event.to_payload()
+    assert payload["orchestration"] is None
+    assert payload["harness_policy"] is None
+    assert AgentStepEvent.from_payload(payload) == event
