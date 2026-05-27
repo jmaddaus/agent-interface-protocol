@@ -724,6 +724,20 @@ def _cli(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+
+    # argparse's add_mutually_exclusive_group doesn't mix cleanly with a
+    # positional, so the three selectors (NAME, --list, --all) are
+    # validated by hand. Combining them silently used to favor whichever
+    # branch came first; now any combination errors out so users get a
+    # clear signal.
+    selectors = sum(
+        bool(x) for x in (args.name, args.list, args.all)
+    )
+    if selectors > 1:
+        parser.error(
+            "NAME, --list, and --all are mutually exclusive; choose one"
+        )
+
     schemas = json_schemas()
     indent: int | None = args.indent if args.indent > 0 else None
 

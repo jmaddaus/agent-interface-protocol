@@ -289,8 +289,16 @@ def test_committed_schema_files_match_code():
 
 
 def test_committed_schemas_accessible_via_importlib_resources():
-    """Schemas ship inside the wheel — installed consumers read them
-    via importlib.resources without depending on the repo layout."""
+    """Schemas resolve through ``importlib.resources`` at runtime.
+
+    Note: this passes in an editable / source-tree install regardless
+    of ``[tool.setuptools.package-data]`` because the .json files
+    physically live in the package directory. The real packaging
+    coverage lives in
+    ``test_committed_schemas_present_in_built_wheel`` and
+    ``test_committed_schemas_present_in_built_sdist`` below, which
+    invoke a real build and inspect the resulting archive.
+    """
     import importlib.resources
 
     package_root = importlib.resources.files("agent_interface_protocol")
@@ -298,6 +306,67 @@ def test_committed_schemas_accessible_via_importlib_resources():
     files = {p.name for p in schemas_dir.iterdir() if p.name.endswith(".json")}
     expected = {f"{name}.json" for name in json_schemas()}
     assert files == expected
+
+
+def test_committed_schemas_present_in_built_wheel(tmp_path):
+    """Build a real wheel and assert every schema JSON is inside it.
+
+    This is the headline-claim guard: the importlib test above cannot
+    distinguish a properly packaged build from a source-tree happy
+    path. This one fails if ``[tool.setuptools.package-data]`` is
+    missing, mistyped, or pointed at the wrong glob.
+    """
+    build = pytest.importorskip("build")
+    import zipfile
+
+    builder = build.ProjectBuilder(REPO_ROOT)
+    wheel_path = Path(builder.build("wheel", str(tmp_path)))
+    with zipfile.ZipFile(wheel_path) as zf:
+        names = set(zf.namelist())
+
+    expected = {
+        f"agent_interface_protocol/schemas/{name}.json"
+        for name in json_schemas()
+    }
+    missing = expected - names
+    assert not missing, (
+        f"schemas missing from built wheel {wheel_path.name}: "
+        f"{sorted(missing)}"
+    )
+
+
+def test_committed_schemas_present_in_built_sdist(tmp_path):
+    """Build a real sdist and assert every schema JSON is inside it.
+
+    Guards against a setuptools regression where ``package-data`` is
+    honored by the wheel build but dropped from the sdist when
+    ``include-package-data`` is unset. With pip falling back to sdist
+    in some environments, this matters for installed consumers that
+    read schemas via ``importlib.resources``.
+    """
+    build = pytest.importorskip("build")
+    import tarfile
+
+    builder = build.ProjectBuilder(REPO_ROOT)
+    sdist_path = Path(builder.build("sdist", str(tmp_path)))
+    with tarfile.open(sdist_path) as tf:
+        # sdist tar entries are prefixed with `<name>-<version>/`.
+        names = [m.name for m in tf.getmembers() if m.isfile()]
+
+    expected_suffixes = {
+        f"agent_interface_protocol/schemas/{name}.json"
+        for name in json_schemas()
+    }
+    found = {
+        suffix
+        for suffix in expected_suffixes
+        if any(n.endswith(suffix) for n in names)
+    }
+    missing = expected_suffixes - found
+    assert not missing, (
+        f"schemas missing from built sdist {sdist_path.name}: "
+        f"{sorted(missing)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +421,20 @@ def test_cli_indent_zero_emits_single_line(capsys):
     captured = capsys.readouterr()
     assert code == 0
     assert "\n" not in captured.out.strip()
+
+
+def test_cli_rejects_combined_selectors(capsys):
+    """NAME, --list, and --all are mutually exclusive."""
+    with pytest.raises(SystemExit) as excinfo:
+        _cli(["ErrorInfo", "--list"])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cli(["ErrorInfo", "--all"])
+    assert excinfo.value.code == 2
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cli(["--list", "--all"])
+    assert excinfo.value.code == 2

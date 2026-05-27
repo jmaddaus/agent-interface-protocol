@@ -28,13 +28,21 @@ classifiers = [
 # Required to exercise tests that validate AIP payloads against the
 # JSON Schemas in agent_interface_protocol.schema. Without these,
 # pytest.importorskip silently skips schema validation coverage.
-# 4.18+ supports JSON Schema Draft 2020-12.
-test = ["jsonschema>=4.18"]
+# 4.18+ supports JSON Schema Draft 2020-12. `build` is used by the
+# packaging tests that build a real wheel/sdist and assert the
+# committed schema JSON files are present.
+test = ["jsonschema>=4.18", "build>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/jmaddaus/agent-interface-protocol"
 Source = "https://github.com/jmaddaus/agent-interface-protocol"
 Issues = "https://github.com/jmaddaus/agent-interface-protocol/issues"
+
+[tool.setuptools]
+# Make sure non-.py files declared in package-data also reach the
+# sdist. Without this, some setuptools versions drop them from the
+# source distribution while keeping them in the wheel.
+include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["agent_interface_protocol*"]

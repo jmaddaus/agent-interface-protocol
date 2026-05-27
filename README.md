@@ -478,7 +478,10 @@ A small helper picks the highest mutually-supported version during a
 handshake between two sides that advertise different ranges:
 
 ```python
-from agent_interface_protocol import negotiate_protocol_version
+from agent_interface_protocol import (
+    MAX_SUPPORTED_PROTOCOL_VERSION,
+    negotiate_protocol_version,
+)
 
 agreed = negotiate_protocol_version(
     sender_range=(2, 3),
@@ -486,12 +489,19 @@ agreed = negotiate_protocol_version(
 )
 # → 2
 
-agreed = negotiate_protocol_version(sender_range=(5, 6))  # against this build
+# Sender advertises a range above this build's max — no overlap with
+# the default receiver range, so the negotiation fails closed.
+too_new = MAX_SUPPORTED_PROTOCOL_VERSION + 2
+agreed = negotiate_protocol_version(sender_range=(too_new, too_new + 1))
 # → None — reject the exchange rather than guessing
 ```
 
 Returns `None` when the ranges do not overlap; callers should reject
-rather than fall back to a guessed version.
+rather than fall back to a guessed version. With the default
+`receiver_range`, the result is always a version this build can
+speak. With an explicit `receiver_range`, the helper is a pure range
+intersection — re-validate the result against
+`SUPPORTED_PROTOCOL_VERSIONS` at the trust boundary before using it.
 
 ## License
 

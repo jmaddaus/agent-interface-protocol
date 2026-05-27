@@ -107,6 +107,15 @@ def negotiate_protocol_version(
     ranges do not overlap. Callers should reject the exchange when the
     result is ``None`` rather than guessing.
 
+    This is a pure range intersection. When called with the default
+    ``receiver_range``, the result is guaranteed to be a version this
+    build can speak. When called with an explicit ``receiver_range``
+    (for example proxying on behalf of another peer), the result is
+    only constrained by the two arguments — it may be a version
+    *this build* does not actually support. Validate such results
+    against ``SUPPORTED_PROTOCOL_VERSIONS`` at the trust boundary
+    before using them.
+
     Example::
 
         agreed = negotiate_protocol_version(
@@ -115,8 +124,13 @@ def negotiate_protocol_version(
         )
         # → 2
 
-        agreed = negotiate_protocol_version(sender_range=(5, 6))
-        # → None (sender too new for this build)
+        # Sender advertises a range above this build's max — no overlap
+        # with the default receiver, so the negotiation fails closed.
+        too_new = MAX_SUPPORTED_PROTOCOL_VERSION + 2
+        agreed = negotiate_protocol_version(
+            sender_range=(too_new, too_new + 1),
+        )
+        # → None
     """
     if receiver_range is None:
         receiver_range = (
