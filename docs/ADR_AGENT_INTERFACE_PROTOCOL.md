@@ -154,3 +154,103 @@ payloads parse unchanged.
 - AIP still owns no transport, no scheduler, and no ID generation.
   `message_id`/`step_id`/`sent_at`/`trace_id` are caller-supplied and
   opaque to AIP.
+
+---
+
+# ADR Addendum: Orchestration and Harness Layer (v3)
+
+Status: Accepted
+
+Date: 2026-05-26
+
+## Context
+
+v2 added a transport/lifecycle envelope but stopped at the boundary of
+a single step. It cannot represent the inside of an orchestrated step:
+
+- a planner phase that produces a sub-plan and a handler phase that
+  executes it;
+- checkpoint/resume markers within a long step;
+- self- or peer-evaluation as a typed event rather than free-form
+  observations;
+- per-capability admission policies (allowed tools, required outputs,
+  budget, max steps) that runtimes want to declare and validate
+  against.
+
+Runtimes were beginning to express these via `extra` bags on
+`SemanticResult` / `OrchestrationContext`-shaped dicts under
+`telemetry`, or product-specific dispatcher schemas — the same drift
+v2 was meant to prevent.
+
+## Decision
+
+Add a small orchestration and harness vocabulary to v2's
+communication layer without committing AIP to a particular
+orchestration model.
+
+1. **`OrchestrationContext`** — descriptive metadata locating a
+   message/event in a larger run (`run_id`, `root_handoff_id`,
+   `parent_step_id`, `step_id`, `phase`, `capability`,
+   `fanout_group_id`, `checkpoint_id`, `extra`). Optional on
+   `AgentMessage` and `AgentStepEvent`.
+2. **`HarnessPolicy`** — execution contract (`contract_id`,
+   `allowed_tools`, `required_outputs`, `max_tool_calls`,
+   `max_steps`, `requires_self_evaluation`, `budget`, `extra`).
+   Optional on `AgentMessage` and `AgentStepEvent`. Numeric limits
+   must be non-negative or `null`.
+3. **Four new `AgentStepEvent.kind`s**: `phase_started`,
+   `phase_completed`, `checkpoint`, `evaluation`. Per-kind body
+   shapes are validated at the parse boundary like the v2 kinds.
+
+Phase values are open strings (`planner`, `handler`, `tool`,
+`narrator`, `evaluator`, or custom) — AIP does not enforce a fixed
+phase taxonomy, only documents conventional values.
+
+`PROTOCOL_VERSION` is bumped to `3` and the supported range widens to
+`1..3`. The new top-level fields and event kinds would be rejected by
+v2 parsers under the strict-at-boundary policy, so this is a real
+version bump, not a silent extension.
+
+## Alternatives Considered
+
+- **Embed orchestration fields directly into `AgentStepResult` /
+  `AgentHandoff`.** Rejected — couples orchestration to semantic
+  content, and forces every consumer (including ones that don't
+  orchestrate) to know about run topology.
+- **Put orchestration metadata inside `extra` bags.** Rejected —
+  exactly the drift this commit is meant to prevent. `extra` is for
+  product-specific data, not for cross-runtime conventions.
+- **Standardize a phase enum.** Rejected — premature. Runtimes
+  differ on phase taxonomy (planner/handler/evaluator vs.
+  observe/think/act vs. roles in multi-agent debate). Open string
+  with documented conventions covers more cases without locking any
+  in.
+- **Make orchestration/harness required fields.** Rejected — would
+  force simple agents to fill in synthetic values. Optional + null
+  default keeps the cost zero for non-orchestrated cases.
+
+## Invariants (added)
+
+- Orchestration metadata is descriptive, not transport identity.
+  `run_id`/`step_id`/`phase` describe execution topology;
+  `message_id`/`correlation_id` describe message transport.
+- Harness policy is an execution contract. Producers should emit
+  events consistent with the declared policy; consumers may reject
+  or flag violations.
+- `phase` values are open strings; reuse common labels (`planner`,
+  `handler`, `tool`, `narrator`, `evaluator`).
+- Checkpoint bodies are opaque to AIP. The `state` field is
+  preserved for resume/replay but not interpreted.
+
+## Consequences
+
+- Planner/handler/evaluator-style runtimes can be expressed
+  natively, including KKF-style harnesses, without leaking
+  product-specific schemas into AIP.
+- v1 and v2 consumers continue to parse unchanged. v3 producers must
+  negotiate against the supported range before emitting v3-only
+  fields or kinds.
+- AIP still owns no orchestration engine — `OrchestrationContext`
+  and `HarnessPolicy` describe topology and contract; they do not
+  implement scheduling, admission, or evaluation logic. Runtimes
+  own those.

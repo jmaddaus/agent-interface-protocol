@@ -30,9 +30,14 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 **Communication DTOs** (added in v2 — see [Communication Layer](#communication-layer)):
 
 - `AgentMessage`: transport envelope. Owns addressing (`sender`/`recipient`), correlation (`message_id`/`correlation_id`/`in_reply_to`), and timing. Carries one of six payload kinds (`handoff`, `step_event`, `step_result`, `cancel`, `ack`, `error`).
-- `AgentStepEvent`: one event in the timeline of a single step (`accepted`, `progress`, `tool_event`, `partial_response`, `question`, `final`). Per-step `seq` enables ordering and replay.
+- `AgentStepEvent`: one event in the timeline of a single step. v2 kinds: `accepted`, `progress`, `tool_event`, `partial_response`, `question`, `final`. v3 adds `phase_started`, `phase_completed`, `checkpoint`, `evaluation`. Per-step `seq` enables ordering and replay.
 - `ErrorInfo`: typed transport-/control-plane error (`code`, `message`, `retriable`, `details`).
 - `StreamingAgentExecutor`: streaming-oriented executor interface alongside `AgentExecutor`.
+
+**Orchestration DTOs** (added in v3 — optional, see [Orchestration and Harness Layer](#orchestration-and-harness-layer)):
+
+- `OrchestrationContext`: descriptive metadata locating a message/event in a larger run — `run_id`, `step_id`, `phase` (`planner`/`handler`/`tool`/`narrator`/`evaluator`/custom), `capability`, `fanout_group_id`, `checkpoint_id`.
+- `HarnessPolicy`: execution contract — `allowed_tools`, `required_outputs`, `max_tool_calls`, `max_steps`, `requires_self_evaluation`, `budget`.
 
 ## Invariants
 
@@ -47,6 +52,10 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 9. Within one `(handoff_id, step_id)`, `AgentStepEvent.seq` is monotonically increasing per producer. Use it for ordering, deduplication, and resume.
 10. A step terminates exactly once — one `AgentStepEvent` of kind `final` or one `AgentMessage` of kind `step_result`. Do not emit further events for the same `step_id` after termination.
 11. `ErrorInfo.code` values are stable identifiers; do not parse `ErrorInfo.message` to recover semantics.
+12. Orchestration identity (`run_id`, `step_id`, `phase`) is descriptive of execution topology and is distinct from transport identity (`message_id`, `correlation_id`). Do not conflate them.
+13. `HarnessPolicy` is an execution contract: producers should emit events consistent with the declared policy, and consumers may reject or flag violations. AIP carries the policy but does not enforce it.
+14. `phase` is an open string; reuse common labels (`planner`, `handler`, `tool`, `narrator`, `evaluator`) before inventing new ones.
+15. `checkpoint` event `state` is opaque to AIP — preserved for resume/replay but not interpreted.
 
 ## Installation
 
@@ -59,7 +68,7 @@ python -m pip install -e .
 When published as a package, pin it like any other protocol dependency:
 
 ```bash
-python -m pip install "agent-interface-protocol==0.3.*"
+python -m pip install "agent-interface-protocol==0.4.*"
 ```
 
 ## Quick Example
@@ -208,8 +217,73 @@ Cross-kind payloads are rejected at the parse boundary: e.g. an
 because `AgentHandoff.from_payload` does not recognize `code` as a
 top-level field.
 
-v1 payloads parse unchanged under v2. `SUPPORTED_PROTOCOL_VERSIONS`
-covers `1..2` for the duration of the v2 release.
+v1 and v2 payloads parse unchanged under v3. `SUPPORTED_PROTOCOL_VERSIONS`
+covers `1..3` for the duration of the v3 release.
+
+## Orchestration and Harness Layer
+
+v3 adds two optional, descriptive DTOs and four new event kinds for
+runtimes that execute a step as a sequence of orchestration phases
+(planner / handler / evaluator, observe / think / act, multi-agent
+debate roles, etc.). Simple agents that don't orchestrate can ignore
+this layer entirely — the fields default to `None` and the new kinds
+are only emitted when needed.
+
+```python
+from agent_interface_protocol import (
+    AgentMessage,
+    AgentStepEvent,
+    HarnessPolicy,
+    OrchestrationContext,
+)
+
+planner_started = AgentMessage(
+    kind="step_event",
+    correlation_id="h1",
+    payload=AgentStepEvent(
+        kind="phase_started",
+        handoff_id="h1", step_id="s1", seq=1,
+        body={"phase": "planner", "message": "planning"},
+    ).to_payload(),
+    orchestration=OrchestrationContext(
+        run_id="run-1",
+        root_handoff_id="h1",
+        step_id="s1",
+        phase="planner",
+        capability="pd_authoring",
+    ),
+    harness_policy=HarnessPolicy(
+        contract_id="pd_authoring_v1",
+        allowed_tools=("create_pd", "update_pd"),
+        required_outputs=("pd_id",),
+        max_tool_calls=12,
+        max_steps=4,
+        requires_self_evaluation=True,
+        budget={"tokens": 50000, "wall_seconds": 60},
+    ),
+)
+```
+
+**Phase labels** are open strings, but reuse common values where they
+fit: `planner`, `handler`, `tool`, `narrator`, `evaluator`. Custom
+labels are allowed for product-specific topologies.
+
+**Orchestration identity is distinct from transport identity.**
+`run_id`/`step_id`/`phase` describe execution topology; `message_id`/
+`correlation_id`/`in_reply_to` describe message transport. A router
+can rewrite `sender`/`recipient` without disturbing the orchestration
+topology, and an orchestrator can re-emit a step under a new `run_id`
+without touching transport IDs.
+
+**Harness policy is descriptive, not enforced by AIP.** Producers
+should emit events consistent with the declared policy (don't call
+disallowed tools, don't exceed limits, emit an `evaluation` event when
+`requires_self_evaluation=True`). Consumers may reject or flag
+violations. AIP carries the contract; runtimes own enforcement.
+
+See [`docs/AGENT_INTERFACE_PROTOCOL.md`](docs/AGENT_INTERFACE_PROTOCOL.md)
+for a worked multi-phase scenario (planner → handler → checkpoint →
+evaluator → final).
 
 ## Serialization
 
@@ -262,7 +336,10 @@ AIP does not own:
 - model-provider integrations;
 - UI rendering;
 - business-domain DTOs;
-- persistence schemas.
+- persistence schemas;
+- orchestration engines, admission controllers, or evaluators (AIP carries `OrchestrationContext` and `HarnessPolicy` but does not implement them);
+- transport implementations (queues, websockets, gRPC bindings);
+- ID minting (`message_id`, `run_id`, `step_id`, `checkpoint_id` are caller-supplied).
 
 A consuming application should adapt those implementation details into `AgentHandoff` and `AgentStepResult`.
 
@@ -274,7 +351,7 @@ Run tests from the repository root:
 python -m pytest
 ```
 
-The conformance tests cover immutability, serialization, protocol-version rejection and preservation, status validation, semantic/tool separation, non-mapping result behavior, and unknown-field and wrong-type rejection at parse boundaries. The v2 communication layer adds round-trip coverage per envelope/event `kind`, cross-kind payload rejection, `seq` ordering invariants, and v1 backwards-compatibility checks.
+The conformance tests cover immutability, serialization, protocol-version rejection and preservation, status validation, semantic/tool separation, non-mapping result behavior, and unknown-field and wrong-type rejection at parse boundaries. The v2 communication layer adds round-trip coverage per envelope/event `kind`, cross-kind payload rejection, `seq` ordering invariants, and v1 backwards-compatibility checks. v3 adds round-trip coverage for `OrchestrationContext`, `HarnessPolicy`, the four new event kinds, optional-field defaults, harness numeric-limit validation, and the orchestration/transport identity separation.
 
 ## Versioning
 
