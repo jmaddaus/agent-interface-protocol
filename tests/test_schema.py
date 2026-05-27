@@ -31,7 +31,7 @@ jsonschema = pytest.importorskip("jsonschema")
 Draft202012Validator = jsonschema.validators.Draft202012Validator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMAS_DIR = REPO_ROOT / "schemas"
+SCHEMAS_DIR = REPO_ROOT / "agent_interface_protocol" / "schemas"
 
 
 # ---------------------------------------------------------------------------
@@ -286,3 +286,155 @@ def test_committed_schema_files_match_code():
             f"{path.name} is out of date — "
             "run `python scripts/generate_schemas.py` to regenerate."
         )
+
+
+def test_committed_schemas_accessible_via_importlib_resources():
+    """Schemas resolve through ``importlib.resources`` at runtime.
+
+    Note: this passes in an editable / source-tree install regardless
+    of ``[tool.setuptools.package-data]`` because the .json files
+    physically live in the package directory. The real packaging
+    coverage lives in
+    ``test_committed_schemas_present_in_built_wheel`` and
+    ``test_committed_schemas_present_in_built_sdist`` below, which
+    invoke a real build and inspect the resulting archive.
+    """
+    import importlib.resources
+
+    package_root = importlib.resources.files("agent_interface_protocol")
+    schemas_dir = package_root / "schemas"
+    files = {p.name for p in schemas_dir.iterdir() if p.name.endswith(".json")}
+    expected = {f"{name}.json" for name in json_schemas()}
+    assert files == expected
+
+
+def test_committed_schemas_present_in_built_wheel(tmp_path):
+    """Build a real wheel and assert every schema JSON is inside it.
+
+    This is the headline-claim guard: the importlib test above cannot
+    distinguish a properly packaged build from a source-tree happy
+    path. This one fails if ``[tool.setuptools.package-data]`` is
+    missing, mistyped, or pointed at the wrong glob.
+    """
+    build = pytest.importorskip("build")
+    import zipfile
+
+    builder = build.ProjectBuilder(REPO_ROOT)
+    wheel_path = Path(builder.build("wheel", str(tmp_path)))
+    with zipfile.ZipFile(wheel_path) as zf:
+        names = set(zf.namelist())
+
+    expected = {
+        f"agent_interface_protocol/schemas/{name}.json"
+        for name in json_schemas()
+    }
+    missing = expected - names
+    assert not missing, (
+        f"schemas missing from built wheel {wheel_path.name}: "
+        f"{sorted(missing)}"
+    )
+
+
+def test_committed_schemas_present_in_built_sdist(tmp_path):
+    """Build a real sdist and assert every schema JSON is inside it.
+
+    Guards against a setuptools regression where ``package-data`` is
+    honored by the wheel build but dropped from the sdist when
+    ``include-package-data`` is unset. With pip falling back to sdist
+    in some environments, this matters for installed consumers that
+    read schemas via ``importlib.resources``.
+    """
+    build = pytest.importorskip("build")
+    import tarfile
+
+    builder = build.ProjectBuilder(REPO_ROOT)
+    sdist_path = Path(builder.build("sdist", str(tmp_path)))
+    with tarfile.open(sdist_path) as tf:
+        # sdist tar entries are prefixed with `<name>-<version>/`.
+        names = [m.name for m in tf.getmembers() if m.isfile()]
+
+    expected_suffixes = {
+        f"agent_interface_protocol/schemas/{name}.json"
+        for name in json_schemas()
+    }
+    found = {
+        suffix
+        for suffix in expected_suffixes
+        if any(n.endswith(suffix) for n in names)
+    }
+    missing = expected_suffixes - found
+    assert not missing, (
+        f"schemas missing from built sdist {sdist_path.name}: "
+        f"{sorted(missing)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+from agent_interface_protocol.schema import _cli  # noqa: E402
+
+
+def test_cli_lists_names(capsys):
+    code = _cli(["--list"])
+    captured = capsys.readouterr()
+    assert code == 0
+    lines = [line for line in captured.out.splitlines() if line]
+    assert lines == sorted(json_schemas())
+
+
+def test_cli_lists_when_no_args(capsys):
+    code = _cli([])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "AgentMessage" in captured.out
+
+
+def test_cli_dumps_named_schema(capsys):
+    code = _cli(["ErrorInfo"])
+    captured = capsys.readouterr()
+    assert code == 0
+    parsed = json.loads(captured.out)
+    assert parsed == json_schemas()["ErrorInfo"]
+
+
+def test_cli_dumps_all(capsys):
+    code = _cli(["--all"])
+    captured = capsys.readouterr()
+    assert code == 0
+    parsed = json.loads(captured.out)
+    assert set(parsed) == set(json_schemas())
+
+
+def test_cli_rejects_unknown_name(capsys):
+    code = _cli(["NotAThing"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "unknown schema" in captured.err
+    assert "available:" in captured.err
+
+
+def test_cli_indent_zero_emits_single_line(capsys):
+    code = _cli(["ErrorInfo", "--indent", "0"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "\n" not in captured.out.strip()
+
+
+def test_cli_rejects_combined_selectors(capsys):
+    """NAME, --list, and --all are mutually exclusive."""
+    with pytest.raises(SystemExit) as excinfo:
+        _cli(["ErrorInfo", "--list"])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cli(["ErrorInfo", "--all"])
+    assert excinfo.value.code == 2
+
+    with pytest.raises(SystemExit) as excinfo:
+        _cli(["--list", "--all"])
+    assert excinfo.value.code == 2

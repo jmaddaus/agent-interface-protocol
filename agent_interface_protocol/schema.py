@@ -676,3 +676,90 @@ __all__ = [
     "harness_policy_schema",
     "json_schemas",
 ]
+
+
+# ---------------------------------------------------------------------------
+# CLI: python -m agent_interface_protocol.schema [NAME] [--all] [--list]
+# ---------------------------------------------------------------------------
+
+
+def _cli(argv: list[str] | None = None) -> int:
+    """Print a schema (or list of schema names) to stdout.
+
+    No dependency on ``jsonschema`` — just emits the schema dict as
+    JSON. Useful in CI pipelines that feed schemas to non-Python
+    codegen or validation tools.
+    """
+    import argparse
+    import json as _json
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="python -m agent_interface_protocol.schema",
+        description=(
+            "Print a JSON Schema for an AIP DTO. With no arguments, "
+            "lists the available DTO names."
+        ),
+    )
+    parser.add_argument(
+        "name",
+        nargs="?",
+        help="DTO name (e.g. AgentMessage). Omit with --list to enumerate.",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List available DTO names and exit.",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Dump every schema as one JSON object keyed by DTO name.",
+    )
+    parser.add_argument(
+        "--indent",
+        type=int,
+        default=2,
+        help="JSON indent (default: 2). Use 0 for a single line.",
+    )
+
+    args = parser.parse_args(argv)
+
+    # argparse's add_mutually_exclusive_group doesn't mix cleanly with a
+    # positional, so the three selectors (NAME, --list, --all) are
+    # validated by hand. Combining them silently used to favor whichever
+    # branch came first; now any combination errors out so users get a
+    # clear signal.
+    selectors = sum(
+        bool(x) for x in (args.name, args.list, args.all)
+    )
+    if selectors > 1:
+        parser.error(
+            "NAME, --list, and --all are mutually exclusive; choose one"
+        )
+
+    schemas = json_schemas()
+    indent: int | None = args.indent if args.indent > 0 else None
+
+    if args.all:
+        print(_json.dumps(schemas, indent=indent, sort_keys=True))
+        return 0
+
+    if args.list or args.name is None:
+        for name in sorted(schemas):
+            print(name)
+        return 0
+
+    if args.name not in schemas:
+        print(f"unknown schema: {args.name!r}", file=sys.stderr)
+        print(
+            f"available: {', '.join(sorted(schemas))}", file=sys.stderr,
+        )
+        return 2
+
+    print(_json.dumps(schemas[args.name], indent=indent, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())
