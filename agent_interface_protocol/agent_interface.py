@@ -93,6 +93,53 @@ def _frozen_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return _freeze_value(dict(value or {}))
 
 
+def negotiate_protocol_version(
+    sender_range: tuple[int, int],
+    receiver_range: tuple[int, int] | None = None,
+) -> int | None:
+    """Pick the highest protocol version both sides accept.
+
+    Each ``range`` is an inclusive ``(min, max)`` tuple. The receiver
+    range defaults to this build's
+    ``(MIN_SUPPORTED_PROTOCOL_VERSION, MAX_SUPPORTED_PROTOCOL_VERSION)``.
+
+    Returns the highest version both sides support, or ``None`` if the
+    ranges do not overlap. Callers should reject the exchange when the
+    result is ``None`` rather than guessing.
+
+    Example::
+
+        agreed = negotiate_protocol_version(
+            sender_range=(2, 3),
+            receiver_range=(1, 2),
+        )
+        # → 2
+
+        agreed = negotiate_protocol_version(sender_range=(5, 6))
+        # → None (sender too new for this build)
+    """
+    if receiver_range is None:
+        receiver_range = (
+            MIN_SUPPORTED_PROTOCOL_VERSION,
+            MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    sender_min, sender_max = sender_range
+    receiver_min, receiver_max = receiver_range
+    if sender_min > sender_max:
+        raise ValueError(
+            f"invalid sender_range {sender_range!r}: min > max"
+        )
+    if receiver_min > receiver_max:
+        raise ValueError(
+            f"invalid receiver_range {receiver_range!r}: min > max"
+        )
+    common_max = min(sender_max, receiver_max)
+    common_min = max(sender_min, receiver_min)
+    if common_min > common_max:
+        return None
+    return common_max
+
+
 def _validate_protocol_version(value: Any) -> int:
     raw = PROTOCOL_VERSION if value in (None, "") else value
     if isinstance(raw, bool):

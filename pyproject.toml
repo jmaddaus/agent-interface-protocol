@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-interface-protocol"
-version = "0.4.0"
+version = "0.5.0"
 description = "Immutable Agent Interface Protocol DTOs for host and agent handoff."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -38,6 +38,9 @@ Issues = "https://github.com/jmaddaus/agent-interface-protocol/issues"
 
 [tool.setuptools.packages.find]
 include = ["agent_interface_protocol*"]
+
+[tool.setuptools.package-data]
+agent_interface_protocol = ["schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

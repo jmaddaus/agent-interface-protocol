@@ -70,7 +70,7 @@ python -m pip install -e .
 When published as a package, pin it like any other protocol dependency:
 
 ```bash
-python -m pip install "agent-interface-protocol==0.4.*"
+python -m pip install "agent-interface-protocol==0.5.*"
 ```
 
 ## Quick Example
@@ -366,9 +366,9 @@ all_schemas = json_schemas()     # {"AgentMessage": {...}, "AgentHandoff": {...}
 ```
 
 ```bash
-# Static files committed under schemas/ — for non-Python consumers
-# reading the repo on GitHub.
-ls schemas/
+# Static files committed under agent_interface_protocol/schemas/ —
+# also shipped inside the wheel for downstream tooling.
+ls agent_interface_protocol/schemas/
 # AgentHandoff.json   AgentMessage.json     AgentStepEvent.json
 # AgentStepResult.json  ErrorInfo.json      ExecutionPolicy.json
 # HarnessPolicy.json    OrchestrationContext.json
@@ -402,6 +402,18 @@ python scripts/generate_schemas.py
 
 A test asserts the committed JSON files match the code output, so
 forgotten regeneration surfaces on the next `pytest` run.
+
+### Schema CLI
+
+A small CLI ships with the package — no `jsonschema` dependency, just
+JSON output suitable for piping into codegen or validation tools:
+
+```bash
+python -m agent_interface_protocol.schema --list       # enumerate DTO names
+python -m agent_interface_protocol.schema AgentMessage # dump one schema
+python -m agent_interface_protocol.schema --all        # dump all schemas as one object
+python -m agent_interface_protocol.schema ErrorInfo --indent 0  # single-line JSON
+```
 
 ## Reference Implementations
 
@@ -461,6 +473,25 @@ Protocol payloads include `agent_interface_version`. This package emits `PROTOCO
 When introducing a new protocol version, widen the supported range *before* any producer starts emitting it. Keeping the previous version in the supported set during a rolling deploy avoids rejecting in-flight payloads while old and new processes run concurrently. Drop a version from the range only once no producer can still emit it.
 
 Payloads outside the supported range raise `ValueError`. Enforce this at process boundaries, queue rehydration boundaries, and network boundaries.
+
+A small helper picks the highest mutually-supported version during a
+handshake between two sides that advertise different ranges:
+
+```python
+from agent_interface_protocol import negotiate_protocol_version
+
+agreed = negotiate_protocol_version(
+    sender_range=(2, 3),
+    receiver_range=(1, 2),
+)
+# → 2
+
+agreed = negotiate_protocol_version(sender_range=(5, 6))  # against this build
+# → None — reject the exchange rather than guessing
+```
+
+Returns `None` when the ranges do not overlap; callers should reject
+rather than fall back to a guessed version.
 
 ## License
 

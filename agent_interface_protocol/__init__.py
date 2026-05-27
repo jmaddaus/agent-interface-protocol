@@ -19,6 +19,7 @@ from agent_interface_protocol.agent_interface import (
     SemanticResult,
     StreamingAgentExecutor,
     ToolEvent,
+    negotiate_protocol_version,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     "SemanticResult",
     "StreamingAgentExecutor",
     "ToolEvent",
+    "negotiate_protocol_version",
 ]

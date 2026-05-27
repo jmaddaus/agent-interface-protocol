@@ -31,7 +31,7 @@ jsonschema = pytest.importorskip("jsonschema")
 Draft202012Validator = jsonschema.validators.Draft202012Validator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMAS_DIR = REPO_ROOT / "schemas"
+SCHEMAS_DIR = REPO_ROOT / "agent_interface_protocol" / "schemas"
 
 
 # ---------------------------------------------------------------------------
@@ -286,3 +286,69 @@ def test_committed_schema_files_match_code():
             f"{path.name} is out of date — "
             "run `python scripts/generate_schemas.py` to regenerate."
         )
+
+
+def test_committed_schemas_accessible_via_importlib_resources():
+    """Schemas ship inside the wheel — installed consumers read them
+    via importlib.resources without depending on the repo layout."""
+    import importlib.resources
+
+    package_root = importlib.resources.files("agent_interface_protocol")
+    schemas_dir = package_root / "schemas"
+    files = {p.name for p in schemas_dir.iterdir() if p.name.endswith(".json")}
+    expected = {f"{name}.json" for name in json_schemas()}
+    assert files == expected
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+from agent_interface_protocol.schema import _cli  # noqa: E402
+
+
+def test_cli_lists_names(capsys):
+    code = _cli(["--list"])
+    captured = capsys.readouterr()
+    assert code == 0
+    lines = [line for line in captured.out.splitlines() if line]
+    assert lines == sorted(json_schemas())
+
+
+def test_cli_lists_when_no_args(capsys):
+    code = _cli([])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "AgentMessage" in captured.out
+
+
+def test_cli_dumps_named_schema(capsys):
+    code = _cli(["ErrorInfo"])
+    captured = capsys.readouterr()
+    assert code == 0
+    parsed = json.loads(captured.out)
+    assert parsed == json_schemas()["ErrorInfo"]
+
+
+def test_cli_dumps_all(capsys):
+    code = _cli(["--all"])
+    captured = capsys.readouterr()
+    assert code == 0
+    parsed = json.loads(captured.out)
+    assert set(parsed) == set(json_schemas())
+
+
+def test_cli_rejects_unknown_name(capsys):
+    code = _cli(["NotAThing"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "unknown schema" in captured.err
+    assert "available:" in captured.err
+
+
+def test_cli_indent_zero_emits_single_line(capsys):
+    code = _cli(["ErrorInfo", "--indent", "0"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "\n" not in captured.out.strip()
