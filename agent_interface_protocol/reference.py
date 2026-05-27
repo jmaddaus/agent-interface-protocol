@@ -44,6 +44,20 @@ class SyncStreamAdapter(AgentExecutor):
     contract but the underlying executor is streaming. The reverse
     direction — wrapping a sync executor as a streaming one — is
     trivially "yield one ``final`` event"; it does not need an adapter.
+
+    Implementation notes
+    --------------------
+    * Handoff validation is the streaming executor's responsibility
+      inside ``stream``. ``step`` does not call ``validate_handoff``
+      because doing so would either double-validate (if the executor
+      also validates internally) or imply that ``step`` is the only
+      validation entry point. Callers who need pre-stream validation
+      should invoke ``validate_handoff`` explicitly.
+    * Draining is unbounded by design: to detect events emitted after
+      ``final``, ``step`` must consume the iterator to exhaustion. An
+      executor that yields ``final`` and then continues indefinitely
+      will hang the caller. Cancel via the executor's own ``cancel``
+      method or an external timeout when this is a risk.
     """
 
     def __init__(self, streaming: StreamingAgentExecutor) -> None:
@@ -74,6 +88,14 @@ class SyncStreamAdapter(AgentExecutor):
                     "stream emitted an event after the terminal 'final' event"
                 )
             if event.kind == "final":
+                # AgentStepEvent.__post_init__ already re-parsed the body
+                # through AgentStepResult.from_payload for kind="final",
+                # so this parse is redundant for events constructed via
+                # AgentStepEvent(...). Repeated intentionally: it returns
+                # a fresh AgentStepResult from the body (event.body is a
+                # frozen Mapping, not an AgentStepResult), and re-runs
+                # the strict-at-boundary check on hand-built bodies that
+                # might have skipped construction-time validation.
                 result = AgentStepResult.from_payload(event.body)
         if result is None:
             raise RuntimeError(
@@ -143,4 +165,4 @@ class InProcessBus:
         self._log.clear()
 
 
-__all__ = ["SyncStreamAdapter", "InProcessBus"]
+__all__ = ["InProcessBus", "SyncStreamAdapter"]
