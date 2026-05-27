@@ -118,6 +118,21 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     the originating envelope's `agent_interface_version` separately,
     or wrap each persisted event in an envelope.
 
+17. Re-delegation is by reference; referential integrity is the
+    runtime's job.
+
+    `AgentStepResult.next_handoff_id` names a separately-emitted
+    `AgentHandoff` message. AIP validates only that the field is a
+    string at the parse boundary — it does not (and cannot) verify
+    that the referenced handoff exists, arrived, or is well-formed.
+    Consumers that previously read the embedded
+    `AgentStepResult.updated_handoff` (v1–v3) MUST migrate to
+    correlating the follow-up `AgentHandoff` by id and MUST add
+    referential-integrity checks at their correlation layer
+    (timeout on unresolved references, reject ids that don't match
+    an in-flight or recorded handoff). Silent-until-runtime failure
+    is the trade for the flatter wire shape.
+
 ## Communication Layer
 
 The contract has three layers. Each owns one concern; they are

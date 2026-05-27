@@ -55,6 +55,7 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 15. `checkpoint` event `state` is opaque to AIP — preserved for resume/replay but not interpreted.
 16. When `orchestration`, `harness_policy`, or `phase` appears on both an envelope and its inner event, producers MUST keep the values consistent across layers; the inner (event-level) value is authoritative for the event's content; consumers MAY treat divergence as an inconsistency error.
 17. `AgentStepEvent` does not carry an `agent_interface_version`. Events are envelope-bound: producers that persist bare events outside an `AgentMessage` MUST persist the originating envelope's version separately, or wrap each persisted event in an envelope.
+18. `AgentStepResult.next_handoff_id` is a reference, not an embedded DTO. AIP validates only that the field is a string at the parse boundary; runtimes MUST add referential-integrity checks at their correlation layer (timeout on unresolved references, reject ids that don't match an in-flight or recorded handoff). Silent-until-runtime failure is the trade for the flatter wire shape that replaced v3's embedded `updated_handoff`.
 
 ## Installation
 
@@ -210,6 +211,29 @@ nesting depth for LLM-emitted JSON, so v3-shape payloads (with nested
 `semantic_context`, `semantic_result`, `execution_policy`, or
 `updated_handoff`) are rejected at the parse boundary.
 `SUPPORTED_PROTOCOL_VERSIONS` covers `4..4` for this release.
+
+**Re-delegation migration (runtimes that read `updated_handoff`).**
+v3's `AgentStepResult.updated_handoff` was an embedded `AgentHandoff`
+DTO — structurally validated at the parse boundary alongside the
+result. v4 replaces it with `AgentStepResult.next_handoff_id`, a
+**string reference** to a separately-emitted `AgentHandoff` message.
+Two consequences runtimes need to handle:
+
+1. The next handoff arrives in a *different* `AgentMessage` (kind
+   `handoff`), not inside the step result. Subscribers that expected
+   to read `result.updated_handoff` synchronously must now correlate
+   the follow-up handoff by id.
+2. A dangling or typo'd `next_handoff_id` is **not caught at the
+   parse boundary** — `from_payload` only validates that the field
+   is a string. Stale or unresolvable references surface at runtime
+   when the consumer tries to look the handoff up. Runtimes should
+   validate referential integrity at their own correlation layer
+   (e.g. timeout if the referenced handoff never arrives, reject
+   ids that don't match an in-flight or recorded handoff).
+
+This is a deliberate trade: the embedded DTO inflated wire-format
+depth past where flash/lite LLMs reliably emit valid JSON. See the
+v4 ADR addendum for the alternatives considered.
 
 ## Orchestration and Harness Layer
 
@@ -373,9 +397,10 @@ jsonschema, gojsonschema), Anthropic tool_use, and Gemini structured
 output without `$ref` resolution.
 
 **OpenAI strict structured outputs caveat.** AIP's open extension
-fields (`args`, `extra`, `telemetry`, `payload`, `body`, `details`,
-`budget`, `metrics`, `state`, `schema`) remain `{"type": "object"}`
-because the protocol's extensibility hinges on them being free-form.
+fields (`args`, `context_extra`, `policy_extra`, `result_extra`,
+`telemetry`, `payload`, `body`, `details`, `budget`, `metrics`,
+`state`, `schema`) remain `{"type": "object"}` because the
+protocol's extensibility hinges on them being free-form.
 OpenAI's strict `response_format` mode requires every object to
 declare `properties` and forbids open objects, so these schemas are
 not drop-in for OpenAI strict mode. Use Anthropic tool_use, Gemini,
