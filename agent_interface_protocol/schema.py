@@ -8,16 +8,26 @@ rather than ``oneOf``. That shape ports cleanly across validators
 (ajv, jsonschema, gojsonschema), structured-output systems (Anthropic
 tool_use, Gemini), and most schema-driven UI tools.
 
+v4 wire-format flatness
+-----------------------
+The v3 ``SemanticContext``, ``SemanticResult``, and ``ExecutionPolicy``
+sub-objects were dissolved into ``AgentHandoff`` and
+``AgentStepResult`` at the wire level. ``updated_handoff`` was
+replaced by a ``next_handoff_id`` reference. The result: the deepest
+LLM-emitted shape (``AgentStepResult``) is depth 2, ``AgentHandoff``
+is depth 2, and small/flash models can produce them reliably.
+
 OpenAI strict structured outputs caveat
 ---------------------------------------
-The protocol's open extension fields — ``args``, ``extra``,
-``telemetry``, ``payload``, ``body``, ``details``, ``budget``,
-``metrics``, ``state``, ``schema`` — remain ``{"type": "object"}``
-because AIP's design hinges on them being free-form. OpenAI's strict
-mode requires every object to declare ``properties`` and forbids
-open objects, so these schemas are not drop-in for OpenAI strict
-response_format. Use Anthropic tool_use, Gemini, or string-encoded
-extension data when targeting OpenAI strict.
+The protocol's open extension fields — ``args``, ``context_extra``,
+``policy_extra``, ``result_extra``, ``telemetry``, ``payload``,
+``body``, ``details``, ``budget``, ``metrics``, ``state``, ``schema``
+— remain ``{"type": "object"}`` because AIP's design hinges on them
+being free-form. OpenAI's strict mode requires every object to
+declare ``properties`` and forbids open objects, so these schemas
+are not drop-in for OpenAI strict response_format. Use Anthropic
+tool_use, Gemini, or string-encoded extension data when targeting
+OpenAI strict.
 
 Necessary-but-not-sufficient
 ----------------------------
@@ -104,53 +114,6 @@ def _nullable(*, type_: str, minimum: int | None = None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _semantic_context() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "user_goal": {"type": "string"},
-            "source_summary": {"type": "string"},
-            "assumptions": _string_array(),
-            "decisions": _string_array(),
-            "constraints": _string_array(),
-            "expected_outcome": {"type": "string"},
-            "observations": _string_array(),
-            "extra": _open_object(),
-        },
-    }
-
-
-def _semantic_result() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "action_summary": {"type": "string"},
-            "state_changes": _string_array(),
-            "unresolved_questions": _string_array(),
-            "followups": _string_array(),
-            "observations": _string_array(),
-            "extra": _open_object(),
-        },
-    }
-
-
-def _execution_policy() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "write_scope": _string_array(),
-            "dependency_keys": _string_array(),
-            "priority": {"type": "integer"},
-            "requires_confirmation": {"type": "boolean"},
-            "max_steps": {"type": "integer"},
-            "extra": _open_object(),
-        },
-    }
-
-
 def _tool_event() -> dict[str, Any]:
     return {
         "type": "object",
@@ -228,6 +191,7 @@ def _nullable_object(inner: dict[str, Any]) -> dict[str, Any]:
 
 
 def _agent_handoff() -> dict[str, Any]:
+    """Flat v4 AgentHandoff — semantic and policy fields at top level."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -239,14 +203,29 @@ def _agent_handoff() -> dict[str, Any]:
             "lane": {"type": "string"},
             "action": {"type": "string"},
             "args": _open_object(),
-            "semantic_context": _semantic_context(),
-            "execution_policy": _execution_policy(),
+            # --- semantic (hoisted from v3 SemanticContext) ---
+            "user_goal": {"type": "string"},
+            "source_summary": {"type": "string"},
+            "assumptions": _string_array(),
+            "decisions": _string_array(),
+            "constraints": _string_array(),
+            "expected_outcome": {"type": "string"},
+            "observations": _string_array(),
+            "context_extra": _open_object(),
+            # --- execution policy (hoisted from v3 ExecutionPolicy) ---
+            "write_scope": _string_array(),
+            "dependency_keys": _string_array(),
+            "priority": {"type": "integer"},
+            "requires_confirmation": {"type": "boolean"},
+            "max_steps": {"type": "integer"},
+            "policy_extra": _open_object(),
             "warnings": _string_array(),
         },
     }
 
 
 def _agent_step_result() -> dict[str, Any]:
+    """Flat v4 AgentStepResult — semantic-result fields at top level."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -258,14 +237,21 @@ def _agent_step_result() -> dict[str, Any]:
                 "enum": sorted(AGENT_STEP_STATUSES),
             },
             "user_visible_response": {"type": "string"},
-            "semantic_result": _semantic_result(),
+            # --- semantic result (hoisted from v3 SemanticResult) ---
+            "action_summary": {"type": "string"},
+            "state_changes": _string_array(),
+            "unresolved_questions": _string_array(),
+            "followups": _string_array(),
+            "observations": _string_array(),
+            "result_extra": _open_object(),
+            # --- execution trace & control ---
             "tool_events": {
                 "type": "array",
                 "items": _tool_event(),
             },
             "question": {"type": "string"},
             "error": {"type": "string"},
-            "updated_handoff": _nullable_object(_agent_handoff()),
+            "next_handoff_id": {"type": "string"},
             "telemetry": _open_object(),
         },
     }
@@ -450,8 +436,9 @@ def agent_handoff_schema() -> dict[str, Any]:
         "$schema": SCHEMA_DIALECT,
         "title": "AgentHandoff",
         "description": (
-            "Immutable handoff between agents. Carries executable args, "
-            "semantic context, and execution policy."
+            "Immutable handoff between agents (v4 flat shape). Semantic, "
+            "policy, and addressing fields live at the top level — no "
+            "nested semantic_context or execution_policy sub-objects."
         ),
         **_agent_handoff(),
     }
@@ -461,7 +448,11 @@ def agent_step_result_schema() -> dict[str, Any]:
     return {
         "$schema": SCHEMA_DIALECT,
         "title": "AgentStepResult",
-        "description": "Immutable result of one target-agent step.",
+        "description": (
+            "Immutable result of one target-agent step (v4 flat shape). "
+            "Semantic-result fields are at the top level; re-delegation "
+            "is by reference via next_handoff_id."
+        ),
         **_agent_step_result(),
     }
 
@@ -511,30 +502,6 @@ def agent_message_schema() -> dict[str, Any]:
     }
 
 
-def semantic_context_schema() -> dict[str, Any]:
-    return {
-        "$schema": SCHEMA_DIALECT,
-        "title": "SemanticContext",
-        **_semantic_context(),
-    }
-
-
-def semantic_result_schema() -> dict[str, Any]:
-    return {
-        "$schema": SCHEMA_DIALECT,
-        "title": "SemanticResult",
-        **_semantic_result(),
-    }
-
-
-def execution_policy_schema() -> dict[str, Any]:
-    return {
-        "$schema": SCHEMA_DIALECT,
-        "title": "ExecutionPolicy",
-        **_execution_policy(),
-    }
-
-
 def tool_event_schema() -> dict[str, Any]:
     return {
         "$schema": SCHEMA_DIALECT,
@@ -579,9 +546,6 @@ def json_schemas() -> dict[str, dict[str, Any]]:
         "AgentStepResult": agent_step_result_schema(),
         "AgentStepEvent": agent_step_event_schema(),
         "AgentMessage": agent_message_schema(),
-        "SemanticContext": semantic_context_schema(),
-        "SemanticResult": semantic_result_schema(),
-        "ExecutionPolicy": execution_policy_schema(),
         "ToolEvent": tool_event_schema(),
         "ErrorInfo": error_info_schema(),
         "OrchestrationContext": orchestration_context_schema(),
@@ -595,9 +559,6 @@ __all__ = [
     "agent_message_schema",
     "agent_step_event_schema",
     "agent_step_result_schema",
-    "semantic_context_schema",
-    "semantic_result_schema",
-    "execution_policy_schema",
     "tool_event_schema",
     "error_info_schema",
     "orchestration_context_schema",

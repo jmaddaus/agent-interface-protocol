@@ -24,14 +24,20 @@ from typing import Any, Iterator, Literal, Mapping
 
 
 # Version this build emits when serializing freshly-constructed objects.
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 # Inclusive range of protocol versions this build can parse. Widen this
 # (not just PROTOCOL_VERSION) when adding a new version so that services
 # deploying on a rolling basis can accept both the old and the new payload
 # during the rollout window.
-MIN_SUPPORTED_PROTOCOL_VERSION = 1
-MAX_SUPPORTED_PROTOCOL_VERSION = 3
+#
+# v4 is a hard break from v3: SemanticContext, SemanticResult, and
+# ExecutionPolicy were dissolved into the parent DTOs (AgentHandoff,
+# AgentStepResult) to flatten the wire format for LLM consumers that
+# choke on deep nesting. updated_handoff on AgentStepResult was
+# replaced with next_handoff_id (a reference, not an embedded DTO).
+MIN_SUPPORTED_PROTOCOL_VERSION = 4
+MAX_SUPPORTED_PROTOCOL_VERSION = 4
 SUPPORTED_PROTOCOL_VERSIONS: frozenset[int] = frozenset(
     range(MIN_SUPPORTED_PROTOCOL_VERSION, MAX_SUPPORTED_PROTOCOL_VERSION + 1)
 )
@@ -318,210 +324,6 @@ def _parse_optional_int(
     return value
 
 
-_SEMANTIC_CONTEXT_KEYS: frozenset[str] = frozenset({
-    "user_goal",
-    "source_summary",
-    "assumptions",
-    "decisions",
-    "constraints",
-    "expected_outcome",
-    "observations",
-    "extra",
-})
-
-
-@dataclass(frozen=True)
-class SemanticContext:
-    """Meaning passed to the receiving agent.
-
-    This is deliberately independent from tool-call transcripts. A peer
-    agent should be able to understand the user's goal, constraints, and
-    decisions without replaying or parsing low-level tool invocations.
-    """
-
-    user_goal: str = ""
-    source_summary: str = ""
-    assumptions: tuple[str, ...] = field(default_factory=tuple)
-    decisions: tuple[str, ...] = field(default_factory=tuple)
-    constraints: tuple[str, ...] = field(default_factory=tuple)
-    expected_outcome: str = ""
-    observations: tuple[str, ...] = field(default_factory=tuple)
-    extra: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "user_goal", str(self.user_goal or ""))
-        object.__setattr__(
-            self, "source_summary", str(self.source_summary or ""),
-        )
-        object.__setattr__(self, "assumptions", _tuple_of_str(self.assumptions))
-        object.__setattr__(self, "decisions", _tuple_of_str(self.decisions))
-        object.__setattr__(self, "constraints", _tuple_of_str(self.constraints))
-        object.__setattr__(
-            self, "expected_outcome", str(self.expected_outcome or ""),
-        )
-        object.__setattr__(
-            self, "observations", _tuple_of_str(self.observations),
-        )
-        object.__setattr__(self, "extra", _frozen_mapping(self.extra))
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any] | None) -> "SemanticContext":
-        data = _require_mapping(payload, "SemanticContext")
-        _reject_unknown_keys(data, _SEMANTIC_CONTEXT_KEYS, "SemanticContext")
-        return cls(
-            user_goal=_parse_str(data, "user_goal", "SemanticContext"),
-            source_summary=_parse_str(data, "source_summary", "SemanticContext"),
-            assumptions=_parse_str_tuple(data, "assumptions", "SemanticContext"),
-            decisions=_parse_str_tuple(data, "decisions", "SemanticContext"),
-            constraints=_parse_str_tuple(data, "constraints", "SemanticContext"),
-            expected_outcome=_parse_str(
-                data, "expected_outcome", "SemanticContext",
-            ),
-            observations=_parse_str_tuple(data, "observations", "SemanticContext"),
-            extra=_parse_mapping(data, "extra", "SemanticContext"),
-        )
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "user_goal": self.user_goal,
-            "source_summary": self.source_summary,
-            "assumptions": list(self.assumptions),
-            "decisions": list(self.decisions),
-            "constraints": list(self.constraints),
-            "expected_outcome": self.expected_outcome,
-            "observations": list(self.observations),
-            "extra": _thaw_value(self.extra),
-        }
-
-
-_SEMANTIC_RESULT_KEYS: frozenset[str] = frozenset({
-    "action_summary",
-    "state_changes",
-    "unresolved_questions",
-    "followups",
-    "observations",
-    "extra",
-})
-
-
-@dataclass(frozen=True)
-class SemanticResult:
-    """Meaning produced by an agent step.
-
-    This is the durable, interoperable summary. Tool events remain
-    available for audit/debugging, but consumers should not infer the
-    semantic result by parsing them.
-    """
-
-    action_summary: str = ""
-    state_changes: tuple[str, ...] = field(default_factory=tuple)
-    unresolved_questions: tuple[str, ...] = field(default_factory=tuple)
-    followups: tuple[str, ...] = field(default_factory=tuple)
-    observations: tuple[str, ...] = field(default_factory=tuple)
-    extra: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "action_summary", str(self.action_summary or ""))
-        object.__setattr__(
-            self, "state_changes", _tuple_of_str(self.state_changes),
-        )
-        object.__setattr__(
-            self, "unresolved_questions",
-            _tuple_of_str(self.unresolved_questions),
-        )
-        object.__setattr__(self, "followups", _tuple_of_str(self.followups))
-        object.__setattr__(
-            self, "observations", _tuple_of_str(self.observations),
-        )
-        object.__setattr__(self, "extra", _frozen_mapping(self.extra))
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any] | None) -> "SemanticResult":
-        data = _require_mapping(payload, "SemanticResult")
-        _reject_unknown_keys(data, _SEMANTIC_RESULT_KEYS, "SemanticResult")
-        return cls(
-            action_summary=_parse_str(data, "action_summary", "SemanticResult"),
-            state_changes=_parse_str_tuple(data, "state_changes", "SemanticResult"),
-            unresolved_questions=_parse_str_tuple(
-                data, "unresolved_questions", "SemanticResult",
-            ),
-            followups=_parse_str_tuple(data, "followups", "SemanticResult"),
-            observations=_parse_str_tuple(data, "observations", "SemanticResult"),
-            extra=_parse_mapping(data, "extra", "SemanticResult"),
-        )
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "action_summary": self.action_summary,
-            "state_changes": list(self.state_changes),
-            "unresolved_questions": list(self.unresolved_questions),
-            "followups": list(self.followups),
-            "observations": list(self.observations),
-            "extra": _thaw_value(self.extra),
-        }
-
-
-_EXECUTION_POLICY_KEYS: frozenset[str] = frozenset({
-    "write_scope",
-    "dependency_keys",
-    "priority",
-    "requires_confirmation",
-    "max_steps",
-    "extra",
-})
-
-
-@dataclass(frozen=True)
-class ExecutionPolicy:
-    """Scheduler and execution constraints for a handoff."""
-
-    write_scope: tuple[str, ...] = field(default_factory=tuple)
-    dependency_keys: tuple[str, ...] = field(default_factory=tuple)
-    priority: int = 100
-    requires_confirmation: bool = False
-    max_steps: int = 1
-    extra: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "write_scope", _tuple_of_str(self.write_scope))
-        object.__setattr__(
-            self, "dependency_keys", _tuple_of_str(self.dependency_keys),
-        )
-        object.__setattr__(self, "priority", int(self.priority))
-        object.__setattr__(
-            self, "requires_confirmation", bool(self.requires_confirmation),
-        )
-        object.__setattr__(self, "max_steps", int(self.max_steps))
-        object.__setattr__(self, "extra", _frozen_mapping(self.extra))
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any] | None) -> "ExecutionPolicy":
-        data = _require_mapping(payload, "ExecutionPolicy")
-        _reject_unknown_keys(data, _EXECUTION_POLICY_KEYS, "ExecutionPolicy")
-        return cls(
-            write_scope=_parse_str_tuple(data, "write_scope", "ExecutionPolicy"),
-            dependency_keys=_parse_str_tuple(
-                data, "dependency_keys", "ExecutionPolicy",
-            ),
-            priority=_parse_int(data, "priority", "ExecutionPolicy", 100),
-            requires_confirmation=_parse_bool(
-                data, "requires_confirmation", "ExecutionPolicy", False,
-            ),
-            max_steps=_parse_int(data, "max_steps", "ExecutionPolicy", 1),
-            extra=_parse_mapping(data, "extra", "ExecutionPolicy"),
-        )
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "write_scope": list(self.write_scope),
-            "dependency_keys": list(self.dependency_keys),
-            "priority": self.priority,
-            "requires_confirmation": self.requires_confirmation,
-            "max_steps": self.max_steps,
-            "extra": _thaw_value(self.extra),
-        }
-
-
 _TOOL_EVENT_KEYS: frozenset[str] = frozenset({
     "name",
     "args",
@@ -583,8 +385,22 @@ _AGENT_HANDOFF_KEYS: frozenset[str] = frozenset({
     "lane",
     "action",
     "args",
-    "semantic_context",
-    "execution_policy",
+    # Hoisted from the v3 SemanticContext sub-object:
+    "user_goal",
+    "source_summary",
+    "assumptions",
+    "decisions",
+    "constraints",
+    "expected_outcome",
+    "observations",
+    "context_extra",
+    # Hoisted from the v3 ExecutionPolicy sub-object:
+    "write_scope",
+    "dependency_keys",
+    "priority",
+    "requires_confirmation",
+    "max_steps",
+    "policy_extra",
     "warnings",
 })
 
@@ -593,16 +409,38 @@ _AGENT_HANDOFF_KEYS: frozenset[str] = frozenset({
 class AgentHandoff:
     """Immutable handoff between agents.
 
-    `args` are executable input to the target lane/action.
-    `semantic_context` is the interoperable meaning attached to that
-    input. Keep both; do not hide semantic summaries inside tool args.
+    Semantic, execution, and addressing fields all live at the top level
+    in v4. There are no nested ``semantic_context`` or
+    ``execution_policy`` sub-objects — the flat shape keeps the
+    LLM-emitted JSON shallow enough that flash/lite models can produce
+    it reliably.
+
+    Field groupings (semantic / policy / addressing) are conventional,
+    not structural. ``args`` remains the open executable-input field;
+    ``context_extra`` and ``policy_extra`` are the open extension points
+    for the semantic-context and execution-policy concept groups.
     """
 
     lane: str
     action: str = ""
     args: Mapping[str, Any] = field(default_factory=dict)
-    semantic_context: SemanticContext = field(default_factory=SemanticContext)
-    execution_policy: ExecutionPolicy = field(default_factory=ExecutionPolicy)
+    # --- semantic (hoisted from v3 SemanticContext) ---
+    user_goal: str = ""
+    source_summary: str = ""
+    assumptions: tuple[str, ...] = field(default_factory=tuple)
+    decisions: tuple[str, ...] = field(default_factory=tuple)
+    constraints: tuple[str, ...] = field(default_factory=tuple)
+    expected_outcome: str = ""
+    observations: tuple[str, ...] = field(default_factory=tuple)
+    context_extra: Mapping[str, Any] = field(default_factory=dict)
+    # --- execution policy (hoisted from v3 ExecutionPolicy) ---
+    write_scope: tuple[str, ...] = field(default_factory=tuple)
+    dependency_keys: tuple[str, ...] = field(default_factory=tuple)
+    priority: int = 100
+    requires_confirmation: bool = False
+    max_steps: int = 1
+    policy_extra: Mapping[str, Any] = field(default_factory=dict)
+    # --- addressing & metadata ---
     protocol_version: int = PROTOCOL_VERSION
     handoff_id: str = ""
     source_agent: str = "host"
@@ -613,18 +451,30 @@ class AgentHandoff:
         object.__setattr__(self, "lane", str(self.lane or ""))
         object.__setattr__(self, "action", str(self.action or ""))
         object.__setattr__(self, "args", _frozen_mapping(self.args))
-        if not isinstance(self.semantic_context, SemanticContext):
-            object.__setattr__(
-                self,
-                "semantic_context",
-                SemanticContext.from_payload(self.semantic_context),  # type: ignore[arg-type]
-            )
-        if not isinstance(self.execution_policy, ExecutionPolicy):
-            object.__setattr__(
-                self,
-                "execution_policy",
-                ExecutionPolicy.from_payload(self.execution_policy),  # type: ignore[arg-type]
-            )
+        object.__setattr__(self, "user_goal", str(self.user_goal or ""))
+        object.__setattr__(
+            self, "source_summary", str(self.source_summary or ""),
+        )
+        object.__setattr__(self, "assumptions", _tuple_of_str(self.assumptions))
+        object.__setattr__(self, "decisions", _tuple_of_str(self.decisions))
+        object.__setattr__(self, "constraints", _tuple_of_str(self.constraints))
+        object.__setattr__(
+            self, "expected_outcome", str(self.expected_outcome or ""),
+        )
+        object.__setattr__(
+            self, "observations", _tuple_of_str(self.observations),
+        )
+        object.__setattr__(self, "context_extra", _frozen_mapping(self.context_extra))
+        object.__setattr__(self, "write_scope", _tuple_of_str(self.write_scope))
+        object.__setattr__(
+            self, "dependency_keys", _tuple_of_str(self.dependency_keys),
+        )
+        object.__setattr__(self, "priority", int(self.priority))
+        object.__setattr__(
+            self, "requires_confirmation", bool(self.requires_confirmation),
+        )
+        object.__setattr__(self, "max_steps", int(self.max_steps))
+        object.__setattr__(self, "policy_extra", _frozen_mapping(self.policy_extra))
         object.__setattr__(
             self,
             "protocol_version",
@@ -650,12 +500,26 @@ class AgentHandoff:
             lane=_parse_str(data, "lane", "AgentHandoff"),
             action=_parse_str(data, "action", "AgentHandoff"),
             args=_parse_mapping(data, "args", "AgentHandoff"),
-            semantic_context=SemanticContext.from_payload(
-                _parse_mapping(data, "semantic_context", "AgentHandoff"),
+            user_goal=_parse_str(data, "user_goal", "AgentHandoff"),
+            source_summary=_parse_str(data, "source_summary", "AgentHandoff"),
+            assumptions=_parse_str_tuple(data, "assumptions", "AgentHandoff"),
+            decisions=_parse_str_tuple(data, "decisions", "AgentHandoff"),
+            constraints=_parse_str_tuple(data, "constraints", "AgentHandoff"),
+            expected_outcome=_parse_str(
+                data, "expected_outcome", "AgentHandoff",
             ),
-            execution_policy=ExecutionPolicy.from_payload(
-                _parse_mapping(data, "execution_policy", "AgentHandoff"),
+            observations=_parse_str_tuple(data, "observations", "AgentHandoff"),
+            context_extra=_parse_mapping(data, "context_extra", "AgentHandoff"),
+            write_scope=_parse_str_tuple(data, "write_scope", "AgentHandoff"),
+            dependency_keys=_parse_str_tuple(
+                data, "dependency_keys", "AgentHandoff",
             ),
+            priority=_parse_int(data, "priority", "AgentHandoff", 100),
+            requires_confirmation=_parse_bool(
+                data, "requires_confirmation", "AgentHandoff", False,
+            ),
+            max_steps=_parse_int(data, "max_steps", "AgentHandoff", 1),
+            policy_extra=_parse_mapping(data, "policy_extra", "AgentHandoff"),
             warnings=_parse_str_tuple(data, "warnings", "AgentHandoff"),
         )
 
@@ -668,8 +532,20 @@ class AgentHandoff:
             "lane": self.lane,
             "action": self.action,
             "args": _thaw_value(self.args),
-            "semantic_context": self.semantic_context.to_payload(),
-            "execution_policy": self.execution_policy.to_payload(),
+            "user_goal": self.user_goal,
+            "source_summary": self.source_summary,
+            "assumptions": list(self.assumptions),
+            "decisions": list(self.decisions),
+            "constraints": list(self.constraints),
+            "expected_outcome": self.expected_outcome,
+            "observations": list(self.observations),
+            "context_extra": _thaw_value(self.context_extra),
+            "write_scope": list(self.write_scope),
+            "dependency_keys": list(self.dependency_keys),
+            "priority": self.priority,
+            "requires_confirmation": self.requires_confirmation,
+            "max_steps": self.max_steps,
+            "policy_extra": _thaw_value(self.policy_extra),
             "warnings": list(self.warnings),
         }
 
@@ -678,26 +554,47 @@ _AGENT_STEP_RESULT_KEYS: frozenset[str] = frozenset({
     "agent_interface_version",
     "status",
     "user_visible_response",
-    "semantic_result",
+    # Hoisted from the v3 SemanticResult sub-object:
+    "action_summary",
+    "state_changes",
+    "unresolved_questions",
+    "followups",
+    "observations",
+    "result_extra",
     "tool_events",
     "question",
     "error",
-    "updated_handoff",
+    "next_handoff_id",
     "telemetry",
 })
 
 
 @dataclass(frozen=True)
 class AgentStepResult:
-    """Immutable result of one target-agent step."""
+    """Immutable result of one target-agent step.
+
+    Semantic-result fields live at the top level in v4 (no nested
+    ``semantic_result`` sub-object). Re-delegation is by reference, not
+    by embedding: ``next_handoff_id`` names a separately-emitted
+    ``AgentHandoff`` rather than inlining the whole DTO. Together these
+    keep the LLM-emitted JSON at depth 2 — flat enough for flash/lite
+    models to produce reliably.
+    """
 
     status: AgentStepStatus
     user_visible_response: str = ""
-    semantic_result: SemanticResult = field(default_factory=SemanticResult)
+    # --- semantic result (hoisted from v3 SemanticResult) ---
+    action_summary: str = ""
+    state_changes: tuple[str, ...] = field(default_factory=tuple)
+    unresolved_questions: tuple[str, ...] = field(default_factory=tuple)
+    followups: tuple[str, ...] = field(default_factory=tuple)
+    observations: tuple[str, ...] = field(default_factory=tuple)
+    result_extra: Mapping[str, Any] = field(default_factory=dict)
+    # --- execution trace & control ---
     tool_events: tuple[ToolEvent, ...] = field(default_factory=tuple)
     question: str = ""
     error: str = ""
-    updated_handoff: AgentHandoff | None = None
+    next_handoff_id: str = ""
     telemetry: Mapping[str, Any] = field(default_factory=dict)
     protocol_version: int = PROTOCOL_VERSION
 
@@ -707,12 +604,19 @@ class AgentStepResult:
         object.__setattr__(
             self, "user_visible_response", str(self.user_visible_response or ""),
         )
-        if not isinstance(self.semantic_result, SemanticResult):
-            object.__setattr__(
-                self,
-                "semantic_result",
-                SemanticResult.from_payload(self.semantic_result),  # type: ignore[arg-type]
-            )
+        object.__setattr__(self, "action_summary", str(self.action_summary or ""))
+        object.__setattr__(
+            self, "state_changes", _tuple_of_str(self.state_changes),
+        )
+        object.__setattr__(
+            self, "unresolved_questions",
+            _tuple_of_str(self.unresolved_questions),
+        )
+        object.__setattr__(self, "followups", _tuple_of_str(self.followups))
+        object.__setattr__(
+            self, "observations", _tuple_of_str(self.observations),
+        )
+        object.__setattr__(self, "result_extra", _frozen_mapping(self.result_extra))
         object.__setattr__(
             self,
             "tool_events",
@@ -723,14 +627,9 @@ class AgentStepResult:
         )
         object.__setattr__(self, "question", str(self.question or ""))
         object.__setattr__(self, "error", str(self.error or ""))
-        if self.updated_handoff is not None and not isinstance(
-            self.updated_handoff, AgentHandoff,
-        ):
-            object.__setattr__(
-                self,
-                "updated_handoff",
-                AgentHandoff.from_payload(self.updated_handoff),  # type: ignore[arg-type]
-            )
+        object.__setattr__(
+            self, "next_handoff_id", str(self.next_handoff_id or ""),
+        )
         object.__setattr__(self, "telemetry", _frozen_mapping(self.telemetry))
         object.__setattr__(
             self,
@@ -750,15 +649,25 @@ class AgentStepResult:
         status = _parse_str(data, "status", "AgentStepResult")
         if status not in AGENT_STEP_STATUSES:
             raise ValueError(f"unknown AgentStepResult status: {status!r}")
-        updated = data.get("updated_handoff")
         return cls(
             status=status,  # type: ignore[arg-type]
             user_visible_response=_parse_str(
                 data, "user_visible_response", "AgentStepResult",
             ),
-            semantic_result=SemanticResult.from_payload(
-                _parse_mapping(data, "semantic_result", "AgentStepResult"),
+            action_summary=_parse_str(
+                data, "action_summary", "AgentStepResult",
             ),
+            state_changes=_parse_str_tuple(
+                data, "state_changes", "AgentStepResult",
+            ),
+            unresolved_questions=_parse_str_tuple(
+                data, "unresolved_questions", "AgentStepResult",
+            ),
+            followups=_parse_str_tuple(data, "followups", "AgentStepResult"),
+            observations=_parse_str_tuple(
+                data, "observations", "AgentStepResult",
+            ),
+            result_extra=_parse_mapping(data, "result_extra", "AgentStepResult"),
             tool_events=tuple(
                 ToolEvent.from_payload(ev)
                 for ev in _parse_mapping_tuple(
@@ -767,10 +676,8 @@ class AgentStepResult:
             ),
             question=_parse_str(data, "question", "AgentStepResult"),
             error=_parse_str(data, "error", "AgentStepResult"),
-            updated_handoff=(
-                AgentHandoff.from_payload(updated)
-                if updated is not None
-                else None
+            next_handoff_id=_parse_str(
+                data, "next_handoff_id", "AgentStepResult",
             ),
             telemetry=_parse_mapping(data, "telemetry", "AgentStepResult"),
             protocol_version=_validate_protocol_version(
@@ -783,15 +690,16 @@ class AgentStepResult:
             "agent_interface_version": self.protocol_version,
             "status": self.status,
             "user_visible_response": self.user_visible_response,
-            "semantic_result": self.semantic_result.to_payload(),
+            "action_summary": self.action_summary,
+            "state_changes": list(self.state_changes),
+            "unresolved_questions": list(self.unresolved_questions),
+            "followups": list(self.followups),
+            "observations": list(self.observations),
+            "result_extra": _thaw_value(self.result_extra),
             "tool_events": [ev.to_payload() for ev in self.tool_events],
             "question": self.question,
             "error": self.error,
-            "updated_handoff": (
-                self.updated_handoff.to_payload()
-                if self.updated_handoff is not None
-                else None
-            ),
+            "next_handoff_id": self.next_handoff_id,
             "telemetry": _thaw_value(self.telemetry),
         }
 

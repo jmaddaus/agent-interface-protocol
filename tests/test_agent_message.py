@@ -15,8 +15,6 @@ from agent_interface_protocol.agent_interface import (
     ErrorInfo,
     HarnessPolicy,
     OrchestrationContext,
-    SemanticContext,
-    SemanticResult,
     ToolEvent,
 )
 
@@ -41,7 +39,7 @@ def test_handoff_envelope_round_trip():
         lane="billing",
         action="create_invoice",
         args={"customer_id": "cust_123", "amount": 1250},
-        semantic_context=SemanticContext(user_goal="invoice approved work"),
+        user_goal="invoice approved work",
     )
     msg = AgentMessage(
         kind="handoff",
@@ -79,7 +77,7 @@ def test_step_result_envelope_round_trip():
     result = AgentStepResult(
         status="completed",
         user_visible_response="Created invoice.",
-        semantic_result=SemanticResult(action_summary="Created inv_456."),
+        action_summary="Created inv_456.",
     )
     msg = AgentMessage(
         kind="step_result",

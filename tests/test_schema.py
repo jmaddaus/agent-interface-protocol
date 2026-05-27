@@ -11,11 +11,8 @@ from agent_interface_protocol import (
     AgentStepEvent,
     AgentStepResult,
     ErrorInfo,
-    ExecutionPolicy,
     HarnessPolicy,
     OrchestrationContext,
-    SemanticContext,
-    SemanticResult,
     ToolEvent,
 )
 from agent_interface_protocol.schema import (
@@ -97,14 +94,10 @@ def test_agent_handoff_payload_validates():
         lane="billing",
         action="create_invoice",
         args={"customer_id": "cust_123", "amount": 1250},
-        semantic_context=SemanticContext(
-            user_goal="invoice approved work",
-            assumptions=("budget exists",),
-        ),
-        execution_policy=ExecutionPolicy(
-            write_scope=("billing:invoices",),
-            requires_confirmation=False,
-        ),
+        user_goal="invoice approved work",
+        assumptions=("budget exists",),
+        write_scope=("billing:invoices",),
+        requires_confirmation=False,
     )
     _validate(agent_handoff_schema(), handoff.to_payload())
 
@@ -113,10 +106,8 @@ def test_agent_step_result_payload_validates():
     result = AgentStepResult(
         status="completed",
         user_visible_response="Done.",
-        semantic_result=SemanticResult(
-            action_summary="Created draft invoice inv_456.",
-            state_changes=("invoice:inv_456:draft",),
-        ),
+        action_summary="Created draft invoice inv_456.",
+        state_changes=("invoice:inv_456:draft",),
         tool_events=(
             ToolEvent(
                 name="create_invoice",
@@ -151,7 +142,7 @@ def test_agent_step_result_payload_validates():
             "final",
             AgentStepResult(
                 status="completed",
-                semantic_result=SemanticResult(action_summary="x"),
+                action_summary="x",
             ).to_payload(),
         ),
         ("phase_started", {"phase": "planner", "message": "planning"}),

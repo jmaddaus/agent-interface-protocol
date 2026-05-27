@@ -9,7 +9,6 @@ from agent_interface_protocol import (
     AgentMessage,
     AgentStepEvent,
     AgentStepResult,
-    SemanticResult,
     StreamingAgentExecutor,
     ToolEvent,
 )
@@ -47,9 +46,7 @@ def _final_event(seq: int, **kwargs) -> AgentStepEvent:
     body = AgentStepResult(
         status="completed",
         user_visible_response=kwargs.get("response", "ok"),
-        semantic_result=SemanticResult(
-            action_summary=kwargs.get("summary", "did the thing"),
-        ),
+        action_summary=kwargs.get("summary", "did the thing"),
     ).to_payload()
     return AgentStepEvent(
         kind="final",
@@ -324,4 +321,4 @@ def test_sync_adapter_drives_streaming_executor_end_to_end():
     result = adapter.step(AgentHandoff(lane="x"))
     assert result.status == "completed"
     assert result.user_visible_response == "done"
-    assert result.semantic_result.action_summary == "found it"
+    assert result.action_summary == "found it"

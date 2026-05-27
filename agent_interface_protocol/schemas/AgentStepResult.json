@@ -1,55 +1,46 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Immutable result of one target-agent step.",
+  "description": "Immutable result of one target-agent step (v4 flat shape). Semantic-result fields are at the top level; re-delegation is by reference via next_handoff_id.",
   "properties": {
+    "action_summary": {
+      "type": "string"
+    },
     "agent_interface_version": {
-      "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
-      "maximum": 3,
-      "minimum": 1,
+      "description": "Protocol version. This build accepts versions in [4, 4]; widening the range will be reflected in updated schemas.",
+      "maximum": 4,
+      "minimum": 4,
       "type": "integer"
     },
     "error": {
       "type": "string"
     },
+    "followups": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "next_handoff_id": {
+      "type": "string"
+    },
+    "observations": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "question": {
       "type": "string"
     },
-    "semantic_result": {
-      "additionalProperties": false,
-      "properties": {
-        "action_summary": {
-          "type": "string"
-        },
-        "extra": {
-          "type": "object"
-        },
-        "followups": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "observations": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "state_changes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "unresolved_questions": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
+    "result_extra": {
       "type": "object"
+    },
+    "state_changes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "status": {
       "enum": [
@@ -91,116 +82,11 @@
       },
       "type": "array"
     },
-    "updated_handoff": {
-      "additionalProperties": false,
-      "properties": {
-        "action": {
-          "type": "string"
-        },
-        "agent_interface_version": {
-          "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
-          "maximum": 3,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "args": {
-          "type": "object"
-        },
-        "execution_policy": {
-          "additionalProperties": false,
-          "properties": {
-            "dependency_keys": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "extra": {
-              "type": "object"
-            },
-            "max_steps": {
-              "type": "integer"
-            },
-            "priority": {
-              "type": "integer"
-            },
-            "requires_confirmation": {
-              "type": "boolean"
-            },
-            "write_scope": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "handoff_id": {
-          "type": "string"
-        },
-        "lane": {
-          "type": "string"
-        },
-        "semantic_context": {
-          "additionalProperties": false,
-          "properties": {
-            "assumptions": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "constraints": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "decisions": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "expected_outcome": {
-              "type": "string"
-            },
-            "extra": {
-              "type": "object"
-            },
-            "observations": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "source_summary": {
-              "type": "string"
-            },
-            "user_goal": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        },
-        "source_agent": {
-          "type": "string"
-        },
-        "target_agent": {
-          "type": "string"
-        },
-        "warnings": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
+    "unresolved_questions": {
+      "items": {
+        "type": "string"
       },
-      "type": [
-        "object",
-        "null"
-      ]
+      "type": "array"
     },
     "user_visible_response": {
       "type": "string"
