@@ -61,13 +61,14 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 
 ## Installation
 
-This repository currently provides a source package. From a local checkout:
+The package is not yet published to PyPI. Install from a local checkout:
 
 ```bash
 python -m pip install -e .
 ```
 
-When published as a package, pin it like any other protocol dependency:
+Once published, downstream applications should pin it like any other
+protocol dependency:
 
 ```bash
 python -m pip install "agent-interface-protocol==0.6.*"
@@ -466,7 +467,7 @@ from agent_interface_protocol.reference import (
 
 **`SyncStreamAdapter`** exposes a `StreamingAgentExecutor` through the
 sync `AgentExecutor.step` contract. It drains `stream(handoff)`,
-enforces invariants 9 and 10 (strictly-increasing `seq`, exactly one
+enforces invariants 8 and 9 (strictly-increasing `seq`, exactly one
 terminal `final` event, no post-`final` events), and returns the
 `AgentStepResult` from the `final` event:
 

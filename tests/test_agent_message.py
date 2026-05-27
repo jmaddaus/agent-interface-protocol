@@ -204,6 +204,28 @@ def test_cross_kind_payload_rejected_step_event_vs_result():
         )
 
 
+def test_cancel_payload_requires_handoff_id():
+    """A cancel without a target handoff is meaningless — reject at boundary."""
+    with pytest.raises(ValueError, match="'handoff_id' is required for cancel"):
+        AgentMessage(kind="cancel", payload={})
+    with pytest.raises(ValueError, match="'handoff_id' is required for cancel"):
+        AgentMessage(kind="cancel", payload={"reason": "user aborted"})
+    with pytest.raises(ValueError, match="'handoff_id' is required for cancel"):
+        AgentMessage(kind="cancel", payload={"handoff_id": ""})
+
+
+def test_ack_payload_requires_accepted():
+    """An ack without `accepted` is ambiguous — reject at boundary."""
+    with pytest.raises(ValueError, match="'accepted' is required for ack"):
+        AgentMessage(kind="ack", payload={})
+    with pytest.raises(ValueError, match="'accepted' is required for ack"):
+        AgentMessage(kind="ack", payload={"reason": "ok"})
+    # Explicit null is the same ambiguity as missing — reject it too, so
+    # the Python boundary matches the JSON Schema (which forbids null).
+    with pytest.raises(ValueError, match="'accepted' is required for ack"):
+        AgentMessage(kind="ack", payload={"accepted": None, "reason": ""})
+
+
 def test_cancel_payload_rejects_unknown_keys_and_wrong_types():
     with pytest.raises(
         ValueError, match=r"unknown AgentMessage.payload\[cancel\] field",

@@ -219,6 +219,7 @@ def _agent_step_result_def() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
+        "required": ["status"],
         "properties": {
             "agent_interface_version": _protocol_version_field(),
             "status": {
@@ -382,8 +383,9 @@ def _agent_message_payload_branches() -> list[dict[str, Any]]:
             {
                 "type": "object",
                 "additionalProperties": False,
+                "required": ["handoff_id"],
                 "properties": {
-                    "handoff_id": {"type": "string"},
+                    "handoff_id": {"type": "string", "minLength": 1},
                     "reason": {"type": "string"},
                 },
             },
@@ -393,6 +395,7 @@ def _agent_message_payload_branches() -> list[dict[str, Any]]:
             {
                 "type": "object",
                 "additionalProperties": False,
+                "required": ["accepted"],
                 "properties": {
                     "accepted": {"type": "boolean"},
                     "reason": {"type": "string"},

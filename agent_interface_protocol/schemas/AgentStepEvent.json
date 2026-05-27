@@ -93,6 +93,9 @@
           "type": "string"
         }
       },
+      "required": [
+        "status"
+      ],
       "type": "object"
     },
     "ExecutionPolicy": {

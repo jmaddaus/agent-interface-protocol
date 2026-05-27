@@ -339,6 +339,9 @@
           "type": "string"
         }
       },
+      "required": [
+        "status"
+      ],
       "type": "object"
     },
     "ErrorInfo": {
@@ -612,12 +615,16 @@
           "additionalProperties": false,
           "properties": {
             "handoff_id": {
+              "minLength": 1,
               "type": "string"
             },
             "reason": {
               "type": "string"
             }
           },
+          "required": [
+            "handoff_id"
+          ],
           "type": "object"
         }
       }
@@ -637,6 +644,9 @@
               "type": "string"
             }
           },
+          "required": [
+            "accepted"
+          ],
           "type": "object"
         }
       }

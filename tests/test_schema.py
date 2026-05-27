@@ -257,6 +257,34 @@ def test_harness_policy_negative_limit_fails_validation():
         Draft202012Validator(schema).validate(payload)
 
 
+def test_missing_status_fails_step_result_validation():
+    """The schema must require `status` to match the strict-at-boundary
+    Python parser, which rejects payloads without status."""
+    schema = agent_step_result_schema()
+    with pytest.raises(jsonschema.ValidationError):
+        Draft202012Validator(schema).validate({})
+
+
+def test_cancel_payload_requires_handoff_id_in_schema():
+    schema = agent_message_schema()
+    payload = {
+        "kind": "cancel",
+        "payload": {"reason": "user aborted"},
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        Draft202012Validator(schema).validate(payload)
+
+
+def test_ack_payload_requires_accepted_in_schema():
+    schema = agent_message_schema()
+    payload = {
+        "kind": "ack",
+        "payload": {"reason": "ok"},
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        Draft202012Validator(schema).validate(payload)
+
+
 def test_protocol_version_out_of_range_fails_validation():
     schema = agent_handoff_schema()
     payload = AgentHandoff(lane="x").to_payload()

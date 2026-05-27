@@ -34,7 +34,7 @@ class SyncStreamAdapter(AgentExecutor):
 
     Drains ``stream(handoff)`` and returns the terminal
     ``AgentStepResult`` carried by the ``final`` event. Verifies the
-    invariants from the protocol doc (invariants 9 and 10):
+    invariants from the protocol doc (invariants 8 and 9):
 
     * ``AgentStepEvent.seq`` is strictly increasing per stream;
     * the stream terminates with exactly one ``final`` event;
