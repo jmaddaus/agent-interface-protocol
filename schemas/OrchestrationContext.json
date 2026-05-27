@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capability": {
+      "type": "string"
+    },
+    "checkpoint_id": {
+      "type": "string"
+    },
+    "extra": {
+      "type": "object"
+    },
+    "fanout_group_id": {
+      "type": "string"
+    },
+    "parent_step_id": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "root_handoff_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "step_id": {
+      "type": "string"
+    }
+  },
+  "title": "OrchestrationContext",
+  "type": "object"
+}

@@ -1,0 +1,119 @@
+{
+  "$defs": {
+    "ExecutionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "dependency_keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "max_steps": {
+          "type": "integer"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "requires_confirmation": {
+          "type": "boolean"
+        },
+        "write_scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SemanticContext": {
+      "additionalProperties": false,
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "expected_outcome": {
+          "type": "string"
+        },
+        "extra": {
+          "type": "object"
+        },
+        "observations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source_summary": {
+          "type": "string"
+        },
+        "user_goal": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Immutable handoff between agents. Carries executable args, semantic context, and execution policy.",
+  "properties": {
+    "action": {
+      "type": "string"
+    },
+    "agent_interface_version": {
+      "description": "Protocol version. This build accepts versions in [1, 3]; widening the range will be reflected in updated schemas.",
+      "maximum": 3,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "args": {
+      "type": "object"
+    },
+    "execution_policy": {
+      "$ref": "#/$defs/ExecutionPolicy"
+    },
+    "handoff_id": {
+      "type": "string"
+    },
+    "lane": {
+      "type": "string"
+    },
+    "semantic_context": {
+      "$ref": "#/$defs/SemanticContext"
+    },
+    "source_agent": {
+      "type": "string"
+    },
+    "target_agent": {
+      "type": "string"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "title": "AgentHandoff",
+  "type": "object"
+}
