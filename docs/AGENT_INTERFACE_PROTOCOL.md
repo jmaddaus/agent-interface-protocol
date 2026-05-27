@@ -37,7 +37,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
    emits `PROTOCOL_VERSION` and accepts any version in
    `SUPPORTED_PROTOCOL_VERSIONS`, preserving the incoming version on parse.
 
-7. Transport identity is distinct from semantic identity.
+8. Transport identity is distinct from semantic identity.
 
    `AgentMessage.sender` / `recipient` are transport-layer routing
    identities (a queue topic, a service address, a router). They are
@@ -45,25 +45,29 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
    `target_agent`, which are the semantic actors. Do not conflate them
    — a router may sit between sender and the semantic target.
 
-8. Step events are ordered per producer.
+9. Step events are ordered per producer.
 
    Within one `(handoff_id, step_id)` pair, `AgentStepEvent.seq` is
-   monotonically increasing and gap-free per producer. Consumers may
-   rely on `seq` for ordering, deduplication, and resume.
+   monotonically increasing per producer. Consumers may rely on `seq`
+   for ordering, deduplication, and resume. AIP does not require
+   `seq` to be gap-free; producers MAY emit gap-free sequences as a
+   stronger guarantee that enables drop detection on resume, but
+   consumers must not assume it unless the producer documents it.
 
-9. A step terminates exactly once.
+10. A step terminates exactly once.
 
-   A step ends with one terminal signal — either an `AgentStepEvent` of
-   kind `"final"` or an `AgentMessage` of kind `"step_result"`.
-   Producers must not emit further events for the same `step_id` after
-   the terminal signal.
+    A step ends with one terminal signal — either an `AgentStepEvent`
+    of kind `"final"` or an `AgentMessage` of kind `"step_result"`.
+    Producers must not emit further events for the same `step_id`
+    after the terminal signal. This is a producer contract; AIP
+    cannot enforce it across messages from a single object.
 
-10. Error codes are stable identifiers.
+11. Error codes are stable identifiers.
 
     `ErrorInfo.code` values are machine-readable. Do not parse
     `ErrorInfo.message` to recover semantics.
 
-11. Orchestration metadata is descriptive, not transport identity.
+12. Orchestration metadata is descriptive, not transport identity.
 
     `OrchestrationContext` fields (`run_id`, `step_id`, `phase`,
     `capability`, `fanout_group_id`, `checkpoint_id`) describe
@@ -71,7 +75,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     `correlation_id` / `in_reply_to` describe message transport.
     Do not conflate them — they answer different questions.
 
-12. Harness policy is an execution contract.
+13. Harness policy is an execution contract.
 
     `HarnessPolicy.allowed_tools`, `required_outputs`,
     `max_tool_calls`, `max_steps`, and `requires_self_evaluation`
@@ -79,7 +83,7 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     contract; producers should emit events consistent with it, and
     consumers may reject or flag violations.
 
-13. Phase values are open strings; reuse common labels.
+14. Phase values are open strings; reuse common labels.
 
     `OrchestrationContext.phase` and the `phase` field on
     `phase_started` / `phase_completed` event bodies are open
@@ -87,11 +91,32 @@ Architecture decision record: `docs/ADR_AGENT_INTERFACE_PROTOCOL.md`.
     runtimes: `planner`, `handler`, `tool`, `narrator`, `evaluator`.
     Custom phases are allowed for product-specific topologies.
 
-14. Checkpoint bodies are opaque to AIP.
+15. Checkpoint bodies are opaque to AIP.
 
     `checkpoint` event bodies carry `checkpoint_id` and `state`.
     AIP preserves `state` for resume/replay but does not interpret
     it; runtimes own the schema.
+
+16. Cross-layer metadata is consistent; the inner value is authoritative.
+
+    `orchestration` and `harness_policy` may appear on both an
+    `AgentMessage` envelope and the `AgentStepEvent` it carries.
+    Likewise `phase` may appear in `OrchestrationContext.phase` and
+    in `phase_started` / `phase_completed` event bodies. Producers
+    MUST keep these values consistent across layers. If they
+    diverge, the inner (event-level) value is authoritative for the
+    event's content; the envelope-level value is a transport-routing
+    convenience. Consumers MAY treat divergence as an inconsistency
+    error and reject the message.
+
+17. Events are envelope-bound for versioning.
+
+    `AgentStepEvent` does not carry an `agent_interface_version`.
+    Events are designed to ride inside an `AgentMessage` envelope,
+    which carries the version. Producers that persist bare events
+    outside an envelope (event-sourcing, log replay) MUST persist
+    the originating envelope's `agent_interface_version` separately,
+    or wrap each persisted event in an envelope.
 
 ## Communication Layer
 
@@ -204,7 +229,7 @@ and pay no cost.
 A planner/handler/evaluator step with a checkpoint mid-handler:
 
 1. `AgentMessage{kind=handoff, message_id=m1, correlation_id=h1, payload=AgentHandoff{...}, harness_policy=HarnessPolicy{contract_id=pd_authoring_v1, requires_self_evaluation=true, ...}}`
-2. `AgentMessage{kind=step_event, payload=AgentStepEvent{kind=accepted, seq=0}, orchestration=OrchestrationContext{run_id=r1, step_id=s1, phase=accepted}}`
+2. `AgentMessage{kind=step_event, payload=AgentStepEvent{kind=accepted, seq=0}, orchestration=OrchestrationContext{run_id=r1, step_id=s1}}`
 3. `AgentMessage{kind=step_event, payload=AgentStepEvent{kind=phase_started, seq=1, body={phase: "planner", message: "planning"}}, orchestration=OrchestrationContext{run_id=r1, step_id=s1, phase=planner}}`
 4. `AgentMessage{kind=step_event, payload=AgentStepEvent{kind=phase_completed, seq=2, body={phase: "planner", summary: "3 sub-steps", metrics: {sub_steps: 3, tokens: 1200}}}}`
 5. `AgentMessage{kind=step_event, payload=AgentStepEvent{kind=phase_started, seq=3, body={phase: "handler", message: ""}}, orchestration=OrchestrationContext{run_id=r1, step_id=s1, phase=handler, capability=pd_authoring}}`

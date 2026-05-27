@@ -380,6 +380,15 @@ def test_evaluation_body_validation():
         AgentStepEvent(kind="evaluation", seq=1, body={"findings": "ok"})
 
 
+def test_evaluation_score_rejects_bool():
+    """bool is a subclass of int in Python; the protocol rejects it
+    explicitly so that score=True isn't silently treated as 1.0."""
+    with pytest.raises(ValueError, match="must be a number or null"):
+        AgentStepEvent(kind="evaluation", seq=1, body={"score": True})
+    with pytest.raises(ValueError, match="must be a number or null"):
+        AgentStepEvent(kind="evaluation", seq=1, body={"score": False})
+
+
 # ---------------------------------------------------------------------------
 # Optional orchestration / harness_policy fields
 # ---------------------------------------------------------------------------

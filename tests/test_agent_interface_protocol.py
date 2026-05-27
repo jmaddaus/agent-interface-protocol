@@ -218,3 +218,11 @@ def test_agent_executor_interface_unchanged():
     from agent_interface_protocol.agent_interface import AgentExecutor
 
     assert {"describe", "validate_handoff", "step"}.issubset(set(dir(AgentExecutor)))
+
+
+def test_streaming_agent_executor_interface_pinned():
+    """The streaming executor surface added in v2 should not drift."""
+    from agent_interface_protocol.agent_interface import StreamingAgentExecutor
+
+    expected = {"describe", "validate_handoff", "stream", "cancel"}
+    assert expected.issubset(set(dir(StreamingAgentExecutor)))

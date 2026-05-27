@@ -49,13 +49,15 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 6. Treat protocol objects as immutable; construct a new object for changes.
 7. Reject unsupported `agent_interface_version` values at application boundaries.
 8. Envelope addressing (`AgentMessage.sender`/`recipient`/`message_id`/`correlation_id`) is transport-layer and distinct from the semantic `source_agent`/`target_agent` inside `AgentHandoff`. Do not conflate them.
-9. Within one `(handoff_id, step_id)`, `AgentStepEvent.seq` is monotonically increasing per producer. Use it for ordering, deduplication, and resume.
-10. A step terminates exactly once — one `AgentStepEvent` of kind `final` or one `AgentMessage` of kind `step_result`. Do not emit further events for the same `step_id` after termination.
+9. Within one `(handoff_id, step_id)`, `AgentStepEvent.seq` is monotonically increasing per producer. Use it for ordering, deduplication, and resume. AIP does not require `seq` to be gap-free; producers MAY emit gap-free sequences as a stronger guarantee, but consumers must not assume it unless the producer documents it.
+10. A step terminates exactly once — one `AgentStepEvent` of kind `final` or one `AgentMessage` of kind `step_result`. Do not emit further events for the same `step_id` after termination. Producer contract; AIP cannot enforce it across messages.
 11. `ErrorInfo.code` values are stable identifiers; do not parse `ErrorInfo.message` to recover semantics.
 12. Orchestration identity (`run_id`, `step_id`, `phase`) is descriptive of execution topology and is distinct from transport identity (`message_id`, `correlation_id`). Do not conflate them.
 13. `HarnessPolicy` is an execution contract: producers should emit events consistent with the declared policy, and consumers may reject or flag violations. AIP carries the policy but does not enforce it.
 14. `phase` is an open string; reuse common labels (`planner`, `handler`, `tool`, `narrator`, `evaluator`) before inventing new ones.
 15. `checkpoint` event `state` is opaque to AIP — preserved for resume/replay but not interpreted.
+16. When `orchestration`, `harness_policy`, or `phase` appears on both an envelope and its inner event, producers MUST keep the values consistent across layers; the inner (event-level) value is authoritative for the event's content; consumers MAY treat divergence as an inconsistency error.
+17. `AgentStepEvent` does not carry an `agent_interface_version`. Events are envelope-bound: producers that persist bare events outside an `AgentMessage` MUST persist the originating envelope's version separately, or wrap each persisted event in an envelope.
 
 ## Installation
 
