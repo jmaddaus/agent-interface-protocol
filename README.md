@@ -17,13 +17,22 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 
 ## Core Concepts
 
+**Content DTOs** (the semantic layer — unchanged since v1):
+
 - `AgentHandoff`: executable target lane/action input plus semantic context and execution policy.
 - `SemanticContext`: user goal, source summary, assumptions, decisions, constraints, observations, and extension data.
 - `ExecutionPolicy`: scheduler/runtime hints such as write scope, dependencies, priority, confirmation requirements, and extension data.
 - `AgentStepResult`: the result of one agent step, including status, user response/question/error, semantic result, tool events, updated handoff, and telemetry.
 - `SemanticResult`: durable meaning produced by an agent step: action summary, state changes, unresolved questions, followups, observations, and extension data.
 - `ToolEvent`: typed audit/debug record for one tool call.
-- `AgentExecutor`: minimal structural interface for target-agent implementations.
+- `AgentExecutor`: minimal structural interface for synchronous target-agent implementations.
+
+**Communication DTOs** (added in v2 — see [Communication Layer](#communication-layer)):
+
+- `AgentMessage`: transport envelope. Owns addressing (`sender`/`recipient`), correlation (`message_id`/`correlation_id`/`in_reply_to`), and timing. Carries one of six payload kinds (`handoff`, `step_event`, `step_result`, `cancel`, `ack`, `error`).
+- `AgentStepEvent`: one event in the timeline of a single step (`accepted`, `progress`, `tool_event`, `partial_response`, `question`, `final`). Per-step `seq` enables ordering and replay.
+- `ErrorInfo`: typed transport-/control-plane error (`code`, `message`, `retriable`, `details`).
+- `StreamingAgentExecutor`: streaming-oriented executor interface alongside `AgentExecutor`.
 
 ## Invariants
 
@@ -34,6 +43,10 @@ AIP gives those concerns explicit places to live. Consumers can build any orches
 5. Do not parse tool event prose to recover semantic meaning.
 6. Treat protocol objects as immutable; construct a new object for changes.
 7. Reject unsupported `agent_interface_version` values at application boundaries.
+8. Envelope addressing (`AgentMessage.sender`/`recipient`/`message_id`/`correlation_id`) is transport-layer and distinct from the semantic `source_agent`/`target_agent` inside `AgentHandoff`. Do not conflate them.
+9. Within one `(handoff_id, step_id)`, `AgentStepEvent.seq` is monotonically increasing per producer. Use it for ordering, deduplication, and resume.
+10. A step terminates exactly once — one `AgentStepEvent` of kind `final` or one `AgentMessage` of kind `step_result`. Do not emit further events for the same `step_id` after termination.
+11. `ErrorInfo.code` values are stable identifiers; do not parse `ErrorInfo.message` to recover semantics.
 
 ## Installation
 
@@ -98,6 +111,42 @@ result = AgentStepResult(
     ),
 )
 ```
+
+## Communication Layer
+
+The content DTOs above describe *what* a step means. The communication
+DTOs added in v2 describe *how* messages carrying that content move
+between agents over time, without coupling AIP to any specific
+transport.
+
+Three layers:
+
+1. **Envelope** — `AgentMessage` owns addressing, correlation, and timing. One envelope carries one payload across a transport (queue, websocket, gRPC stream, in-process bus).
+2. **Lifecycle** — `AgentStepEvent` describes one event in a single step's timeline. Multiple events make up a step; the terminal `final` event carries an `AgentStepResult`. `seq` is producer-assigned and monotonically increasing per `(handoff_id, step_id)`.
+3. **Content** — the v1 DTOs (`AgentHandoff`, `AgentStepResult`, etc.) ride inside envelopes and event bodies unchanged.
+
+A typical streamed step looks like:
+
+```
+AgentMessage(kind=handoff, message_id=m1, correlation_id=h1, payload=<AgentHandoff>)
+AgentMessage(kind=ack, in_reply_to=m1, payload={accepted: true, reason: ""})
+AgentMessage(kind=step_event, correlation_id=h1, payload=<AgentStepEvent kind=accepted seq=0>)
+AgentMessage(kind=step_event, correlation_id=h1, payload=<AgentStepEvent kind=tool_event seq=1>)
+AgentMessage(kind=step_event, correlation_id=h1, payload=<AgentStepEvent kind=partial_response seq=2>)
+AgentMessage(kind=step_result, correlation_id=h1, in_reply_to=m1, payload=<AgentStepResult>)
+```
+
+Synchronous executors are still supported. `AgentExecutor.step` returns
+the terminal `AgentStepResult` directly — equivalent to draining
+`StreamingAgentExecutor.stream(handoff)` until the `final` event.
+
+Cross-kind payloads are rejected at the parse boundary: e.g. an
+`ErrorInfo`-shaped body sent as `kind="handoff"` raises `ValueError`
+because `AgentHandoff.from_payload` does not recognize `code` as a
+top-level field.
+
+v1 payloads parse unchanged under v2. `SUPPORTED_PROTOCOL_VERSIONS`
+covers `1..2` for the duration of the v2 release.
 
 ## Serialization
 

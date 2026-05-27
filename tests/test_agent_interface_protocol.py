@@ -152,3 +152,69 @@ def test_step_result_is_not_mapping_compatible():
     assert not hasattr(result, "get")
     with pytest.raises(TypeError):
         result["answer"]  # type: ignore[index]
+
+
+def test_v1_handoff_payloads_still_parse_under_v2():
+    """v1 producers must continue to parse after v2 widens the version range."""
+    v1_payload = {
+        "agent_interface_version": 1,
+        "handoff_id": "h1",
+        "source_agent": "host",
+        "target_agent": "billing",
+        "lane": "billing",
+        "action": "create_invoice",
+        "args": {"customer_id": "cust_123"},
+        "semantic_context": {
+            "user_goal": "invoice for approved work",
+            "source_summary": "",
+            "assumptions": [],
+            "decisions": [],
+            "constraints": [],
+            "expected_outcome": "",
+            "observations": [],
+            "extra": {},
+        },
+        "execution_policy": {
+            "write_scope": ["billing:invoices"],
+            "dependency_keys": [],
+            "priority": 100,
+            "requires_confirmation": False,
+            "max_steps": 1,
+            "extra": {},
+        },
+        "warnings": [],
+    }
+    handoff = AgentHandoff.from_payload(v1_payload)
+    assert handoff.protocol_version == 1
+    assert handoff.to_payload()["agent_interface_version"] == 1
+
+
+def test_v1_step_result_payloads_still_parse_under_v2():
+    v1_payload = {
+        "agent_interface_version": 1,
+        "status": "completed",
+        "user_visible_response": "ok",
+        "semantic_result": {
+            "action_summary": "ok",
+            "state_changes": [],
+            "unresolved_questions": [],
+            "followups": [],
+            "observations": [],
+            "extra": {},
+        },
+        "tool_events": [],
+        "question": "",
+        "error": "",
+        "updated_handoff": None,
+        "telemetry": {},
+    }
+    result = AgentStepResult.from_payload(v1_payload)
+    assert result.protocol_version == 1
+    assert result.to_payload()["agent_interface_version"] == 1
+
+
+def test_agent_executor_interface_unchanged():
+    """The existing sync executor surface is preserved by the v2 changes."""
+    from agent_interface_protocol.agent_interface import AgentExecutor
+
+    assert {"describe", "validate_handoff", "step"}.issubset(set(dir(AgentExecutor)))

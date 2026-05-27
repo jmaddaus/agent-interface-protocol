@@ -20,18 +20,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import Any, Iterator, Literal, Mapping
 
 
 # Version this build emits when serializing freshly-constructed objects.
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # Inclusive range of protocol versions this build can parse. Widen this
 # (not just PROTOCOL_VERSION) when adding a new version so that services
 # deploying on a rolling basis can accept both the old and the new payload
 # during the rollout window.
 MIN_SUPPORTED_PROTOCOL_VERSION = 1
-MAX_SUPPORTED_PROTOCOL_VERSION = 1
+MAX_SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_PROTOCOL_VERSIONS: frozenset[int] = frozenset(
     range(MIN_SUPPORTED_PROTOCOL_VERSION, MAX_SUPPORTED_PROTOCOL_VERSION + 1)
 )
@@ -219,6 +219,20 @@ def _parse_bool(
             f"got {type(value).__name__}"
         )
     return value
+
+
+def _parse_optional_number(
+    data: Mapping[str, Any], key: str, where: str,
+) -> float | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"{where} field {key!r} must be a number or null, "
+            f"got {type(value).__name__}"
+        )
+    return float(value)
 
 
 _SEMANTIC_CONTEXT_KEYS: frozenset[str] = frozenset({
@@ -694,6 +708,360 @@ class AgentStepResult:
         }
 
 
+_ERROR_INFO_KEYS: frozenset[str] = frozenset({
+    "code",
+    "message",
+    "retriable",
+    "details",
+})
+
+
+@dataclass(frozen=True)
+class ErrorInfo:
+    """Typed error for transport/control-plane failures.
+
+    Use at the envelope layer (an ``AgentMessage`` of kind ``"error"``)
+    or anywhere a structured, machine-readable error is more useful than
+    the freeform ``error: str`` field on ``AgentStepResult``.
+    """
+
+    code: str = ""
+    message: str = ""
+    retriable: bool = False
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "code", str(self.code or ""))
+        object.__setattr__(self, "message", str(self.message or ""))
+        object.__setattr__(self, "retriable", bool(self.retriable))
+        object.__setattr__(self, "details", _frozen_mapping(self.details))
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any] | None) -> "ErrorInfo":
+        data = _require_mapping(payload, "ErrorInfo")
+        _reject_unknown_keys(data, _ERROR_INFO_KEYS, "ErrorInfo")
+        return cls(
+            code=_parse_str(data, "code", "ErrorInfo"),
+            message=_parse_str(data, "message", "ErrorInfo"),
+            retriable=_parse_bool(data, "retriable", "ErrorInfo", False),
+            details=_parse_mapping(data, "details", "ErrorInfo"),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "retriable": self.retriable,
+            "details": _thaw_value(self.details),
+        }
+
+
+AgentStepEventKind = Literal[
+    "accepted",
+    "progress",
+    "tool_event",
+    "partial_response",
+    "question",
+    "final",
+]
+
+AGENT_STEP_EVENT_KINDS: frozenset[str] = frozenset({
+    "accepted",
+    "progress",
+    "tool_event",
+    "partial_response",
+    "question",
+    "final",
+})
+
+
+_AGENT_STEP_EVENT_KEYS: frozenset[str] = frozenset({
+    "handoff_id",
+    "step_id",
+    "seq",
+    "ts",
+    "kind",
+    "body",
+})
+
+
+_STEP_EVENT_PROGRESS_KEYS: frozenset[str] = frozenset({"fraction", "message"})
+_STEP_EVENT_PARTIAL_RESPONSE_KEYS: frozenset[str] = frozenset({"text", "delta"})
+_STEP_EVENT_QUESTION_KEYS: frozenset[str] = frozenset({"question", "schema"})
+
+
+def _validate_step_event_body(kind: str, body: Mapping[str, Any]) -> None:
+    """Strict per-kind body shape validation.
+
+    Called by both ``__post_init__`` (to keep construction honest) and
+    ``from_payload`` (the trust boundary). Re-parses DTO-typed bodies via
+    their own ``from_payload`` so cross-kind payloads are rejected.
+    """
+    where = f"AgentStepEvent.body[{kind}]"
+    if kind == "accepted":
+        _reject_unknown_keys(body, frozenset(), where)
+    elif kind == "progress":
+        _reject_unknown_keys(body, _STEP_EVENT_PROGRESS_KEYS, where)
+        _parse_optional_number(body, "fraction", where)
+        _parse_str(body, "message", where)
+    elif kind == "tool_event":
+        ToolEvent.from_payload(body)
+    elif kind == "partial_response":
+        _reject_unknown_keys(body, _STEP_EVENT_PARTIAL_RESPONSE_KEYS, where)
+        _parse_str(body, "text", where)
+        _parse_bool(body, "delta", where, False)
+    elif kind == "question":
+        _reject_unknown_keys(body, _STEP_EVENT_QUESTION_KEYS, where)
+        _parse_str(body, "question", where)
+        _parse_mapping(body, "schema", where)
+    elif kind == "final":
+        AgentStepResult.from_payload(body)
+    else:
+        raise ValueError(f"unknown AgentStepEvent kind: {kind!r}")
+
+
+@dataclass(frozen=True)
+class AgentStepEvent:
+    """One event in the timeline of a single agent step.
+
+    Multiple events make up a step. The final event of a step carries
+    an ``AgentStepResult`` payload (``kind="final"``); transports may
+    alternatively emit a separate ``AgentMessage`` of kind
+    ``"step_result"`` to deliver the terminal result.
+
+    ``seq`` is a producer-assigned monotonically increasing number per
+    ``(handoff_id, step_id)`` pair. Consumers may use it for ordering,
+    deduplication, and resume.
+    """
+
+    kind: AgentStepEventKind
+    handoff_id: str = ""
+    step_id: str = ""
+    seq: int = 0
+    ts: str = ""
+    body: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        kind = str(self.kind or "")
+        if kind not in AGENT_STEP_EVENT_KINDS:
+            raise ValueError(f"unknown AgentStepEvent kind: {self.kind!r}")
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "handoff_id", str(self.handoff_id or ""))
+        object.__setattr__(self, "step_id", str(self.step_id or ""))
+        if isinstance(self.seq, bool) or not isinstance(self.seq, int):
+            raise ValueError(
+                f"AgentStepEvent.seq must be an integer, "
+                f"got {type(self.seq).__name__}"
+            )
+        if self.seq < 0:
+            raise ValueError(
+                f"AgentStepEvent.seq must be non-negative, got {self.seq}"
+            )
+        object.__setattr__(self, "ts", str(self.ts or ""))
+        object.__setattr__(self, "body", _frozen_mapping(self.body))
+        _validate_step_event_body(self.kind, self.body)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "AgentStepEvent":
+        data = _require_mapping(payload, "AgentStepEvent")
+        _reject_unknown_keys(data, _AGENT_STEP_EVENT_KEYS, "AgentStepEvent")
+        kind = _parse_str(data, "kind", "AgentStepEvent")
+        if kind not in AGENT_STEP_EVENT_KINDS:
+            raise ValueError(f"unknown AgentStepEvent kind: {kind!r}")
+        seq_value = data.get("seq", 0)
+        if isinstance(seq_value, bool) or not isinstance(seq_value, int):
+            raise ValueError(
+                f"AgentStepEvent field 'seq' must be an integer, "
+                f"got {type(seq_value).__name__}"
+            )
+        if seq_value < 0:
+            raise ValueError(
+                f"AgentStepEvent field 'seq' must be non-negative, got {seq_value}"
+            )
+        body = _parse_mapping(data, "body", "AgentStepEvent")
+        return cls(
+            kind=kind,  # type: ignore[arg-type]
+            handoff_id=_parse_str(data, "handoff_id", "AgentStepEvent"),
+            step_id=_parse_str(data, "step_id", "AgentStepEvent"),
+            seq=seq_value,
+            ts=_parse_str(data, "ts", "AgentStepEvent"),
+            body=body,
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "handoff_id": self.handoff_id,
+            "step_id": self.step_id,
+            "seq": self.seq,
+            "ts": self.ts,
+            "body": _thaw_value(self.body),
+        }
+
+
+AgentMessageKind = Literal[
+    "handoff",
+    "step_event",
+    "step_result",
+    "cancel",
+    "ack",
+    "error",
+]
+
+AGENT_MESSAGE_KINDS: frozenset[str] = frozenset({
+    "handoff",
+    "step_event",
+    "step_result",
+    "cancel",
+    "ack",
+    "error",
+})
+
+
+_AGENT_MESSAGE_KEYS: frozenset[str] = frozenset({
+    "agent_interface_version",
+    "message_id",
+    "correlation_id",
+    "in_reply_to",
+    "sender",
+    "recipient",
+    "sent_at",
+    "trace_id",
+    "kind",
+    "payload",
+})
+
+
+_MESSAGE_CANCEL_KEYS: frozenset[str] = frozenset({"handoff_id", "reason"})
+_MESSAGE_ACK_KEYS: frozenset[str] = frozenset({"accepted", "reason"})
+
+
+def _validate_message_payload(kind: str, payload: Mapping[str, Any]) -> None:
+    """Strict per-kind envelope payload validation.
+
+    Re-parses DTO-typed payloads via their ``from_payload`` so that a
+    cross-kind payload (e.g. a step-event-shaped body sent as
+    ``kind="handoff"``) is rejected at the boundary.
+    """
+    where = f"AgentMessage.payload[{kind}]"
+    if kind == "handoff":
+        AgentHandoff.from_payload(payload)
+    elif kind == "step_event":
+        AgentStepEvent.from_payload(payload)
+    elif kind == "step_result":
+        AgentStepResult.from_payload(payload)
+    elif kind == "cancel":
+        _reject_unknown_keys(payload, _MESSAGE_CANCEL_KEYS, where)
+        _parse_str(payload, "handoff_id", where)
+        _parse_str(payload, "reason", where)
+    elif kind == "ack":
+        _reject_unknown_keys(payload, _MESSAGE_ACK_KEYS, where)
+        _parse_bool(payload, "accepted", where, False)
+        _parse_str(payload, "reason", where)
+    elif kind == "error":
+        ErrorInfo.from_payload(payload)
+    else:
+        raise ValueError(f"unknown AgentMessage kind: {kind!r}")
+
+
+@dataclass(frozen=True)
+class AgentMessage:
+    """Transport envelope carrying one AIP payload between agents.
+
+    The envelope owns addressing (``sender``/``recipient``), correlation
+    (``message_id``/``correlation_id``/``in_reply_to``), and timing
+    (``sent_at``/``trace_id``). These are transport-layer identities and
+    are deliberately separate from the semantic ``source_agent`` and
+    ``target_agent`` carried inside an ``AgentHandoff``.
+
+    The ``kind`` discriminator selects which AIP type ``payload`` carries:
+
+    * ``"handoff"`` → ``AgentHandoff``
+    * ``"step_event"`` → ``AgentStepEvent``
+    * ``"step_result"`` → ``AgentStepResult`` (terminal; equivalent to a
+      ``step_event`` of kind ``"final"`` for transports that prefer a
+      distinct terminal message)
+    * ``"cancel"`` → ``{"handoff_id": str, "reason": str}``
+    * ``"ack"`` → ``{"accepted": bool, "reason": str}``
+    * ``"error"`` → ``ErrorInfo``
+
+    AIP does not implement a transport. Queues, websockets, gRPC streams,
+    and in-process buses each decide how to ship ``AgentMessage``
+    payloads. ``sent_at`` is kept as an opaque RFC3339 string; AIP does
+    not parse timestamps.
+    """
+
+    kind: AgentMessageKind
+    message_id: str = ""
+    correlation_id: str = ""
+    in_reply_to: str = ""
+    sender: str = ""
+    recipient: str = ""
+    sent_at: str = ""
+    trace_id: str = ""
+    payload: Mapping[str, Any] = field(default_factory=dict)
+    protocol_version: int = PROTOCOL_VERSION
+
+    def __post_init__(self) -> None:
+        kind = str(self.kind or "")
+        if kind not in AGENT_MESSAGE_KINDS:
+            raise ValueError(f"unknown AgentMessage kind: {self.kind!r}")
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "message_id", str(self.message_id or ""))
+        object.__setattr__(
+            self, "correlation_id", str(self.correlation_id or ""),
+        )
+        object.__setattr__(self, "in_reply_to", str(self.in_reply_to or ""))
+        object.__setattr__(self, "sender", str(self.sender or ""))
+        object.__setattr__(self, "recipient", str(self.recipient or ""))
+        object.__setattr__(self, "sent_at", str(self.sent_at or ""))
+        object.__setattr__(self, "trace_id", str(self.trace_id or ""))
+        object.__setattr__(self, "payload", _frozen_mapping(self.payload))
+        object.__setattr__(
+            self,
+            "protocol_version",
+            _validate_protocol_version(self.protocol_version),
+        )
+        _validate_message_payload(self.kind, self.payload)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "AgentMessage":
+        data = _require_mapping(payload, "AgentMessage")
+        _reject_unknown_keys(data, _AGENT_MESSAGE_KEYS, "AgentMessage")
+        kind = _parse_str(data, "kind", "AgentMessage")
+        if kind not in AGENT_MESSAGE_KINDS:
+            raise ValueError(f"unknown AgentMessage kind: {kind!r}")
+        body = _parse_mapping(data, "payload", "AgentMessage")
+        return cls(
+            kind=kind,  # type: ignore[arg-type]
+            message_id=_parse_str(data, "message_id", "AgentMessage"),
+            correlation_id=_parse_str(data, "correlation_id", "AgentMessage"),
+            in_reply_to=_parse_str(data, "in_reply_to", "AgentMessage"),
+            sender=_parse_str(data, "sender", "AgentMessage"),
+            recipient=_parse_str(data, "recipient", "AgentMessage"),
+            sent_at=_parse_str(data, "sent_at", "AgentMessage"),
+            trace_id=_parse_str(data, "trace_id", "AgentMessage"),
+            payload=body,
+            protocol_version=_validate_protocol_version(
+                data.get("agent_interface_version", PROTOCOL_VERSION),
+            ),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "agent_interface_version": self.protocol_version,
+            "kind": self.kind,
+            "message_id": self.message_id,
+            "correlation_id": self.correlation_id,
+            "in_reply_to": self.in_reply_to,
+            "sender": self.sender,
+            "recipient": self.recipient,
+            "sent_at": self.sent_at,
+            "trace_id": self.trace_id,
+            "payload": _thaw_value(self.payload),
+        }
+
+
 class AgentExecutor:
     """Structural interface for target-agent implementations."""
 
@@ -704,4 +1072,31 @@ class AgentExecutor:
         raise NotImplementedError
 
     def step(self, request: Mapping[str, Any]) -> AgentStepResult:
+        raise NotImplementedError
+
+
+class StreamingAgentExecutor:
+    """Structural interface for streaming target-agent implementations.
+
+    Where ``AgentExecutor.step`` is a single sync call returning a
+    monolithic ``AgentStepResult``, ``StreamingAgentExecutor.stream``
+    yields a sequence of ``AgentStepEvent`` values describing one step
+    as it runs: acceptance, progress, intermediate tool events, partial
+    responses, questions, and a terminal ``final`` event carrying the
+    ``AgentStepResult``.
+
+    AIP does not own the transport. A sync adapter is trivial: drain
+    ``stream(handoff)`` and return the ``final`` event's body.
+    """
+
+    def describe(self) -> Mapping[str, Any]:
+        raise NotImplementedError
+
+    def validate_handoff(self, handoff: AgentHandoff) -> None:
+        raise NotImplementedError
+
+    def stream(self, handoff: AgentHandoff) -> Iterator[AgentStepEvent]:
+        raise NotImplementedError
+
+    def cancel(self, handoff_id: str, reason: str) -> None:
         raise NotImplementedError
